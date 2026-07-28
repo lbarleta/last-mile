@@ -1,18 +1,11 @@
-# Core data processing and analysis
+# Core data processing
 pandas>=1.5.0
 numpy>=1.21.0
 
-# HTTP requests for API calls
+# HTTP requests for GBFS feeds
 requests>=2.28.0
 
-# Database operations
-sqlite3  # Built-in with Python, no version needed
-
-# Date and time handling
-datetime  # Built-in with Python, no version needed
-
-# Type hints and annotations
-typing  # Built-in with Python, no version needed
-
-# File system operations
-os  # Built-in with Python, no version needed
+# Dashboard
+streamlit>=1.28.0
+altair>=5.0.0
+pydeck>=0.8.0

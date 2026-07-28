@@ -51,8 +51,8 @@ class LastMileSetup:
             stations['lat'] = stations['lat'].round(5)
             stations['lon'] = stations['lon'].round(5)
             
-            stations.rename(columns={'name_y': 'region'}, inplace=True)
-   
+            stations.rename(columns={'name_x': 'name', 'name_y': 'region'}, inplace=True)
+
             # Save to database
             stations.to_sql('stations', self.utils.conn, if_exists='replace', index=False)
             print(f"Stations table created and populated successfully with {len(stations)} stations")
@@ -79,6 +79,7 @@ class LastMileSetup:
             
             # Create station_status table structure
             cursor = self.utils.conn.cursor()
+            # timestamp is an hourly string: YYYY-MM-DD-HH:00
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS station_status (
                     station_id TEXT,
@@ -87,10 +88,10 @@ class LastMileSetup:
                     num_ebikes_available INTEGER,
                     num_docks_disabled INTEGER,
                     num_bikes_disabled INTEGER,
-                    timestamp INTEGER
+                    timestamp TEXT
                 )
             ''')
-            
+
             # Create bike_status table structure
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS bike_status (
@@ -101,16 +102,24 @@ class LastMileSetup:
                     is_disabled INTEGER,
                     vehicle_type_id INTEGER,
                     current_range_meters INTEGER,
-                    timestamp INTEGER
+                    timestamp TEXT
                 )
             ''')
             
             self.utils.conn.commit()
+            self.ensure_indexes()
             print("All database tables created successfully")
             
         except sqlite3.Error as e:
             print(f"Error creating tables: {e}")
             raise
+
+    def ensure_indexes(self):
+        """Create indexes used by dashboard historical queries."""
+        from . import lastmile_queries as queries
+
+        queries.ensure_indexes(self.utils.conn)
+        print("Database indexes verified")
     
     def verify_setup(self) -> bool:
         """

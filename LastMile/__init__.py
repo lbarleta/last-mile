@@ -1,21 +1,28 @@
 """
-LastMile - A Python library for managing GBSP transportation data.
+LastMile - A Python library for managing GBFS transportation data.
 
-This library provides tools for ingesting, processing, and analyzing
-bike share and other last-mile transportation data from various APIs.
-
-The library is organized into four main classes:
-- LastMileSetup: For initial setup and configuration
-- LastMileManager: For ongoing data management and updates
-- LastMileUtils: For common utility functions (JSON loading, database operations)
-- LastMileMetrics: For metrics calculations and analysis
+Classes:
+- LastMileSetup: initial setup and configuration
+- LastMileManager: ongoing hourly data collection
+- LastMileUtils: GBFS feed helpers and database connection
+- LastMileMetrics: live-ops and historical metrics from SQLite
 """
 
 from .lastmile_setup import LastMileSetup
 from .lastmile_manager import LastMileManager
 from .lastmile_utils import LastMileUtils
 from .lastmile_metrics import LastMileMetrics
+from .config import DEFAULT_DB_PATH, DEFAULT_FEEDS_URL, DEFAULT_LANG, DEFAULT_TIMEZONE
 
 __version__ = "1.0.0alpha"
 __author__ = "Leonardo Barleta"
-__all__ = ["LastMileSetup", "LastMileManager", "LastMileUtils", "LastMileMetrics"]
+__all__ = [
+    "LastMileSetup",
+    "LastMileManager",
+    "LastMileUtils",
+    "LastMileMetrics",
+    "DEFAULT_DB_PATH",
+    "DEFAULT_FEEDS_URL",
+    "DEFAULT_LANG",
+    "DEFAULT_TIMEZONE",
+]

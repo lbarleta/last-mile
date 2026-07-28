@@ -1,11 +1,5 @@
 # LastMile
 
-A Python library for managing GBSP data from bike share systems and other micro-mobility services.
+Python library for ingesting GBFS bike-share feeds into SQLite and computing ops metrics.
 
-## Features
-
-- **Data Ingestion**: Fetch real-time data from GBFS API
-- **Station Management**: Handle station information and status updates
-- **Bike Tracking**: Monitor bike locations and availability
-- **Metrics Calculation**: Compute system-wide statistics
-- **Database Integration**: Store historical data in SQLite
+The Streamlit dashboard lives in [`app/`](../app/) (`streamlit run app/main.py`). Hourly collection: [`scripts/collect.py`](../scripts/collect.py).

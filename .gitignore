@@ -103,7 +103,7 @@ celerybeat.pid
 
 # Environments
 .env
-.venv
+.venv/
 env/
 venv/
 ENV/
@@ -161,8 +161,9 @@ tmp/
 *.log
 logs/
 
-# Data files (uncomment if you don't want to track data)
-# data/
+# Local data warehouse (keep DB and sidecars out of git)
+data/
+*:Zone.Identifier
 # *.csv
 # *.json
 
