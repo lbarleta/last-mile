@@ -56,6 +56,36 @@ def get_timestamp_bounds(conn: sqlite3.Connection) -> tuple[Optional[str], Optio
     return row[0], row[1]
 
 
+def list_snapshot_dates(conn: sqlite3.Connection) -> list[str]:
+    """Distinct calendar dates (YYYY-MM-DD) that have station_status snapshots."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT substr(timestamp, 1, 10) AS d
+        FROM station_status
+        ORDER BY d
+        """
+    ).fetchall()
+    return [row[0] for row in rows if row[0]]
+
+
+def list_snapshot_hours_for_date(conn: sqlite3.Connection, date_str: str) -> list[str]:
+    """
+    Hours available for a calendar date.
+
+    Returns hour labels like '15:00' for timestamps matching YYYY-MM-DD-HH:00.
+    """
+    rows = conn.execute(
+        """
+        SELECT DISTINCT substr(timestamp, 12, 5) AS h
+        FROM station_status
+        WHERE substr(timestamp, 1, 10) = ?
+        ORDER BY h
+        """,
+        (date_str,),
+    ).fetchall()
+    return [row[0] for row in rows if row[0]]
+
+
 def cutoff_timestamp(
     hours: Optional[int],
     timezone: str = DEFAULT_TIMEZONE,
@@ -117,7 +147,9 @@ def previous_hour_timestamp(timestamp: str) -> str:
 
 
 def get_free_bike_counts(
-    conn: sqlite3.Connection, timestamp: str
+    conn: sqlite3.Connection,
+    timestamp: str,
+    low_range_meters: int = 5000,
 ) -> Dict[str, int]:
     """Counts from free_bike_status / bike_status for a snapshot hour."""
     row = conn.execute(
@@ -125,19 +157,56 @@ def get_free_bike_counts(
         SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN is_disabled = 1 THEN 1 ELSE 0 END) AS disabled,
-            SUM(CASE WHEN is_reserved = 1 THEN 1 ELSE 0 END) AS reserved
+            SUM(CASE WHEN is_reserved = 1 THEN 1 ELSE 0 END) AS reserved,
+            SUM(
+                CASE
+                    WHEN current_range_meters IS NOT NULL
+                         AND current_range_meters <= ?
+                    THEN 1 ELSE 0
+                END
+            ) AS low_range
         FROM bike_status
         WHERE timestamp = ?
         """,
-        (timestamp,),
+        (low_range_meters, timestamp),
     ).fetchone()
     if not row:
-        return {"total": 0, "disabled": 0, "reserved": 0}
+        return {"total": 0, "disabled": 0, "reserved": 0, "low_range": 0}
     return {
         "total": int(row[0] or 0),
         "disabled": int(row[1] or 0),
         "reserved": int(row[2] or 0),
+        "low_range": int(row[3] or 0),
     }
+
+
+def get_free_bike_snapshot(
+    conn: sqlite3.Connection, timestamp: Optional[str] = None
+) -> pd.DataFrame:
+    """Free-range bike locations for a snapshot hour (defaults to latest)."""
+    if timestamp is None:
+        row = conn.execute("SELECT MAX(timestamp) FROM bike_status").fetchone()
+        timestamp = row[0] if row else None
+    if timestamp is None:
+        return pd.DataFrame()
+
+    return pd.read_sql_query(
+        """
+        SELECT
+            bike_id,
+            lat,
+            lon,
+            is_reserved,
+            is_disabled,
+            vehicle_type_id,
+            current_range_meters,
+            timestamp
+        FROM bike_status
+        WHERE timestamp = ?
+        """,
+        conn,
+        params=(timestamp,),
+    )
 
 
 def get_availability_timeseries(
@@ -208,3 +277,39 @@ def get_utilization_snapshot(conn: sqlite3.Connection) -> pd.DataFrame:
     df = df.copy()
     df["utilization"] = df["num_bikes_available"] / capacity_proxy.replace(0, pd.NA)
     return df
+
+
+def avg_distance_to_nearest_station_m(
+    stations: pd.DataFrame,
+    free_bikes: pd.DataFrame,
+) -> Optional[float]:
+    """
+    Average haversine distance (meters) from each free-floating bike
+    to its nearest station. Vectorized; cheap at Bay Wheels scale.
+    """
+    import numpy as np
+
+    if stations.empty or free_bikes.empty:
+        return None
+
+    st = stations.dropna(subset=["lat", "lon"])
+    bk = free_bikes.copy()
+    bk["lat"] = pd.to_numeric(bk["lat"], errors="coerce")
+    bk["lon"] = pd.to_numeric(bk["lon"], errors="coerce")
+    bk = bk.dropna(subset=["lat", "lon"])
+    if st.empty or bk.empty:
+        return None
+
+    st_lat = np.radians(st["lat"].to_numpy(dtype=float))[None, :]
+    st_lon = np.radians(st["lon"].to_numpy(dtype=float))[None, :]
+    bk_lat = np.radians(bk["lat"].to_numpy(dtype=float))[:, None]
+    bk_lon = np.radians(bk["lon"].to_numpy(dtype=float))[:, None]
+
+    dlat = st_lat - bk_lat
+    dlon = st_lon - bk_lon
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(bk_lat) * np.cos(st_lat) * np.sin(dlon / 2) ** 2
+    )
+    dist_m = 2 * 6_371_000.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+    return float(dist_m.min(axis=1).mean())

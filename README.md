@@ -1,6 +1,6 @@
 # LastMile
 
-Hourly Bay Wheels bike-share warehouse and Streamlit ops dashboard, built on open [GBFS](https://github.com/NABSA/gbfs) feeds.
+Hourly bike-share warehouse and Streamlit dashboard, built on open [GBFS](https://github.com/NABSA/gbfs) feeds.
 
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -8,8 +8,9 @@ Hourly Bay Wheels bike-share warehouse and Streamlit ops dashboard, built on ope
 ## What it does
 
 1. **Collect** — pull station and free-bike status from Bay Wheels GBFS once per hour into SQLite
-2. **Live Ops** — KPIs, availability map, empty/full station tables from the latest snapshot
-3. **Historical** — availability trends, peak hours, day-of-week patterns, utilization
+2. **Live Ops** — KPIs (with prior-hour deltas), regional availability mix chart
+3. **Map** — station map colored by empty / low / healthy / full
+4. **Historical** — availability trends, peak hours, day-of-week patterns, utilization
 
 ```text
 GBFS ──► scripts/collect.py ──► data/lastmile-sf.db ──► Streamlit (read-only)
@@ -43,7 +44,7 @@ python scripts/collect.py
 streamlit run app/main.py
 ```
 
-Opens on **Live Ops**; switch to **Historical** from the top control. Optional:
+Opens on **Live Ops**; use the top control for **Map** and **Historical**. Optional:
 `export LASTMILE_DB=/path/to/your.db` (not shown in the UI).
 
 ## Library usage

@@ -1,20 +1,19 @@
-"""Station map view — latest hourly snapshot."""
+"""Station + free-floating bike map view."""
 
 from __future__ import annotations
 
 import streamlit as st
 
-from components.maps import render_station_map
+from components.maps import render_ops_map
 from LastMile.lastmile_metrics import LastMileMetrics
 
 
 def render(metrics_svc: LastMileMetrics) -> None:
-    st.header("Map")
-
     try:
         live = metrics_svc.get_live_ops_metrics()
+        free_bikes = metrics_svc.get_free_bikes(live["timestamp"])
     except Exception as exc:
-        st.error(f"Failed to load station data: {exc}")
+        st.error(f"Failed to load map data: {exc}")
         return
 
     if not live["timestamp"]:
@@ -22,4 +21,4 @@ def render(metrics_svc: LastMileMetrics) -> None:
         return
 
     st.caption(f"Latest snapshot · {live['timestamp']}")
-    render_station_map(live["stations"])
+    render_ops_map(live["stations"], free_bikes=free_bikes)

@@ -10,3 +10,6 @@ DEFAULT_TIMEZONE = "America/Los_Angeles"
 
 # Hourly snapshot format used in station_status / bike_status
 TIMESTAMP_FORMAT = "%Y-%m-%d-%H:00"
+
+# Free-floating e-bikes at or below this remaining range count as low-range
+LOW_RANGE_METERS = 5000

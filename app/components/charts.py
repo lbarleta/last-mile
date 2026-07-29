@@ -104,3 +104,65 @@ def render_utilization_hist(util: pd.DataFrame) -> None:
         .properties(height=280)
     )
     st.altair_chart(chart, width="stretch")
+
+
+def render_region_status_pct(by_region: pd.DataFrame) -> None:
+    """Vertical grouped bar chart of station status mix (%) by region."""
+    if by_region.empty:
+        st.info("No regional station data in this snapshot.")
+        return
+
+    statuses = ["Empty", "Low", "Healthy", "Full"]
+    value_vars = ["pct_empty", "pct_low", "pct_healthy", "pct_full"]
+    count_cols = ["empty", "low", "healthy", "full"]
+
+    df = by_region.melt(
+        id_vars=["region", "total", *count_cols],
+        value_vars=value_vars,
+        var_name="metric",
+        value_name="pct",
+    )
+    df["status"] = df["metric"].map(
+        {
+            "pct_empty": "Empty",
+            "pct_low": "Low",
+            "pct_healthy": "Healthy",
+            "pct_full": "Full",
+        }
+    )
+    region_order = by_region["region"].tolist()
+
+    chart = (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X("region:N", title=None, sort=region_order),
+            y=alt.Y(
+                "pct:Q",
+                title="% of stations in region",
+                scale=alt.Scale(domain=[0, 100]),
+            ),
+            color=alt.Color(
+                "status:N",
+                title=None,
+                scale=alt.Scale(
+                    domain=statuses,
+                    range=["#b42828", "#dc8c28", "#288c5a", "#285ab4"],
+                ),
+                sort=statuses,
+            ),
+            xOffset=alt.XOffset("status:N", sort=statuses),
+            tooltip=[
+                alt.Tooltip("region:N", title="Region"),
+                alt.Tooltip("status:N", title="Status"),
+                alt.Tooltip("pct:Q", title="% of region", format=".1f"),
+                alt.Tooltip("empty:Q", title="Empty"),
+                alt.Tooltip("low:Q", title="Low"),
+                alt.Tooltip("healthy:Q", title="Healthy"),
+                alt.Tooltip("full:Q", title="Full"),
+                alt.Tooltip("total:Q", title="Stations in region"),
+            ],
+        )
+        .properties(height=340, title="Station availability by region")
+    )
+    st.altair_chart(chart, width="stretch")

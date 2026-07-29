@@ -14,7 +14,6 @@ from components import (
     get_metrics,
     resolve_db_path,
 )
-from LastMile.lastmile_queries import get_timestamp_bounds
 from views import historical, live_ops, map_view
 
 st.set_page_config(
@@ -35,9 +34,8 @@ if not Path(db_path).exists():
     st.stop()
 
 metrics_svc = get_metrics(db_path)
-first_ts, last_ts = get_timestamp_bounds(metrics_svc.conn)
-first_date = format_snapshot_date(first_ts) if first_ts else "unknown"
-last_date = format_snapshot_date(last_ts) if last_ts else "unknown"
+latest_ts = metrics_svc.get_latest_timestamp()
+latest_date = format_snapshot_date(latest_ts) if latest_ts else "unknown"
 
 st.markdown(
     f"""
@@ -45,10 +43,12 @@ st.markdown(
   <div class="lm-title">Last Mile</div>
   <div class="lm-subtitle">Bay Wheels, San Francisco</div>
   <div class="lm-blurb">
-    A dashboard for Bay Wheels, a regional bike share system in the San Francisco
-    Bay Area operated by Lyft. Data is based on hourly snapshots published in
-    <a href="https://github.com/NABSA/gbfs">GBFS</a> format and ranges from
-    <strong>{first_date}</strong> to <strong>{last_date}</strong>.
+    A dashboard for monitoring regional bike share systems. Currently loading
+    hourly snapshots from Bay Wheels, a Lyft-operated service in the San Francisco
+    Bay Area, that are published in
+    <a href="https://github.com/NABSA/gbfs">GBFS</a> format. Data spans from
+    October 25, 2025 to {latest_date}. By
+    <a href="https://github.com/lbarleta/last-mile">Leo Barleta</a>.
   </div>
 </div>
 """,
@@ -61,8 +61,6 @@ view = st.segmented_control(
     default="Live Ops",
     label_visibility="collapsed",
 )
-
-st.divider()
 
 if view == "Map":
     map_view.render(metrics_svc)

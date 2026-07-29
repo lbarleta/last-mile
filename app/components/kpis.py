@@ -13,33 +13,51 @@ def _inject_kpi_styles() -> None:
         <style>
             .kpi-row {
                 display: grid;
-                grid-template-columns: repeat(4, minmax(0, 1fr));
-                gap: 0.75rem;
+                grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+                gap: 0.65rem;
                 margin-bottom: 0.75rem;
             }
             .kpi-card {
                 border: 1px solid #d5d9de;
                 border-radius: 8px;
                 background: #ffffff;
-                padding: 0.85rem 1rem;
-                min-height: 5.25rem;
+                padding: 0.75rem 0.85rem;
+                min-height: 4.5rem;
             }
             .kpi-label {
-                font-size: 0.8rem;
+                font-size: 0.75rem;
                 font-weight: 500;
                 color: #5c636b;
                 margin-bottom: 0.35rem;
             }
+            .kpi-hint {
+                font-size: 0.68rem;
+                font-weight: 400;
+                color: #9aa1a9;
+                margin: 0.3rem 0 0 0;
+                line-height: 1.25;
+            }
+            .kpi-value-row {
+                display: flex;
+                align-items: baseline;
+                flex-wrap: wrap;
+                gap: 0.4rem;
+            }
             .kpi-value {
-                font-size: 1.35rem;
+                font-size: 1.25rem;
                 font-weight: 700;
                 color: #1c1f24;
                 line-height: 1.25;
             }
+            .kpi-count {
+                font-size: 0.8rem;
+                font-weight: 400;
+                color: #6b7280;
+            }
             .kpi-delta {
-                font-size: 0.78rem;
-                font-weight: 500;
-                margin-top: 0.35rem;
+                font-size: 0.8rem;
+                font-weight: 600;
+                white-space: nowrap;
             }
             .kpi-delta-up { color: #1f6f54; }
             .kpi-delta-down { color: #b42318; }
@@ -59,13 +77,15 @@ def _inject_kpi_styles() -> None:
 
 
 def _fmt_pct_with_count(pct: float, count: int) -> str:
-    return f"{pct:.1f}% ({count:,})"
+    return f'{pct:.1f}% <span class="kpi-count">({count:,})</span>'
 
 
-def _fmt_ratio(ebikes: int, classic: int, ratio: Optional[float]) -> str:
-    if ratio is None:
-        return f"{ebikes:,} : {classic:,}"
-    return f"{ratio:.2f} : 1 ({ebikes:,}:{classic:,})"
+def _fmt_distance_m(meters: Optional[float]) -> str:
+    if meters is None:
+        return "n/a"
+    if meters >= 1000:
+        return f"{meters / 1000.0:.2f} km"
+    return f"{meters:.0f} m"
 
 
 def _fmt_delta(
@@ -73,32 +93,54 @@ def _fmt_delta(
     *,
     as_pp: bool = False,
     as_count: bool = False,
+    as_meters: bool = False,
 ) -> str:
     if delta is None:
-        return '<div class="kpi-delta kpi-delta-flat">vs prior hour: n/a</div>'
+        return '<span class="kpi-delta kpi-delta-flat">n/a</span>'
 
-    if abs(delta) < 1e-9:
-        text = "0" if as_count else ("0.0 pp" if as_pp else "0.0")
-        return f'<div class="kpi-delta kpi-delta-flat">vs prior hour: {text}</div>'
+    # Treat values that round to zero at display precision as unchanged,
+    # so tiny float noise doesn't show as a red/green "0.0".
+    if as_meters:
+        display_mag = round(abs(delta))
+        zero_text = "0 m"
+    elif as_count:
+        display_mag = round(abs(delta))
+        zero_text = "0"
+    elif as_pp:
+        display_mag = round(abs(delta), 1)
+        zero_text = "0.0 pp"
+    else:
+        display_mag = round(abs(delta), 2)
+        zero_text = "0.0"
+
+    if display_mag == 0:
+        return f'<span class="kpi-delta kpi-delta-flat">{zero_text}</span>'
 
     arrow = "▲" if delta > 0 else "▼"
     css = "kpi-delta-up" if delta > 0 else "kpi-delta-down"
-    if as_pp:
-        text = f"{arrow} {abs(delta):.1f} pp"
+    if as_meters:
+        text = f"{arrow} {display_mag:.0f} m"
+    elif as_pp:
+        text = f"{arrow} {display_mag:.1f} pp"
     elif as_count:
-        text = f"{arrow} {abs(delta):,.0f}"
+        text = f"{arrow} {display_mag:,.0f}"
     else:
-        text = f"{arrow} {abs(delta):.2f}"
-    return f'<div class="kpi-delta {css}">vs prior hour: {text}</div>'
+        text = f"{arrow} {display_mag:.2f}"
+    return f'<span class="kpi-delta {css}">{text}</span>'
 
 
-def _kpi_row(cards: List[Tuple[str, str, str]]) -> str:
-    items = "".join(
-        f'<div class="kpi-card"><div class="kpi-label">{label}</div>'
-        f'<div class="kpi-value">{value}</div>{delta}</div>'
-        for label, value, delta in cards
-    )
-    return f'<div class="kpi-row">{items}</div>'
+def _kpi_row(cards: List[Tuple[str, str, str, str]]) -> str:
+    items = []
+    for label, hint, value, delta in cards:
+        hint_html = f'<div class="kpi-hint">{hint}</div>' if hint else ""
+        delta_html = delta or ""
+        items.append(
+            f'<div class="kpi-card"><div class="kpi-label">{label}</div>'
+            f'<div class="kpi-value-row"><div class="kpi-value">{value}</div>'
+            f"{delta_html}</div>"
+            f"{hint_html}</div>"
+        )
+    return f'<div class="kpi-row">{"".join(items)}</div>'
 
 
 def render_live_kpis(metrics: Dict[str, Any]) -> None:
@@ -108,55 +150,103 @@ def render_live_kpis(metrics: Dict[str, Any]) -> None:
     station_cards = [
         (
             "Total stations",
+            "",
             f"{metrics['total_stations']:,}",
-            _fmt_delta(deltas.get("total_stations"), as_count=True),
+            "",
         ),
         (
-            "% Full",
+            "Full stations",
+            "",
             _fmt_pct_with_count(metrics["pct_full"], metrics["full_stations"]),
             _fmt_delta(deltas.get("pct_full"), as_pp=True),
         ),
         (
-            "% Empty",
+            "Empty stations",
+            "",
             _fmt_pct_with_count(metrics["pct_empty"], metrics["empty_stations"]),
             _fmt_delta(deltas.get("pct_empty"), as_pp=True),
         ),
         (
-            "% Dock availability",
+            "Healthy stations",
+            "Has bikes and docks; bike share ≥20%",
+            _fmt_pct_with_count(metrics["pct_healthy"], metrics["healthy_stations"]),
+            _fmt_delta(deltas.get("pct_healthy"), as_pp=True),
+        ),
+        (
+            "Low stations",
+            "Has bikes and docks; bike share <20%",
+            _fmt_pct_with_count(metrics["pct_low"], metrics["low_stations"]),
+            _fmt_delta(deltas.get("pct_low"), as_pp=True),
+        ),
+        (
+            "Available docks",
+            "",
             _fmt_pct_with_count(
                 metrics["pct_dock_availability"], metrics["docks_available"]
             ),
             _fmt_delta(deltas.get("pct_dock_availability"), as_pp=True),
         ),
+        (
+            "Disabled docks",
+            "",
+            _fmt_pct_with_count(
+                metrics["pct_docks_disabled"], metrics["docks_disabled"]
+            ),
+            _fmt_delta(deltas.get("pct_docks_disabled"), as_pp=True),
+        ),
     ]
     bike_cards = [
         (
-            "Total bikes",
-            f"{metrics['total_bikes']:,}",
-            _fmt_delta(deltas.get("total_bikes"), as_count=True),
+            "Available",
+            "",
+            f"{metrics['available_bikes']:,}",
+            _fmt_delta(deltas.get("available_bikes"), as_count=True),
         ),
         (
-            "E-bike : classic",
-            _fmt_ratio(
-                metrics["ebikes_available"],
-                metrics["classic_available"],
-                metrics.get("ebike_classic_ratio"),
-            ),
-            _fmt_delta(deltas.get("ebike_classic_ratio")),
-        ),
-        (
-            "% E-bike availability",
+            "Docked Classic",
+            "",
             _fmt_pct_with_count(
-                metrics["pct_ebike_availability"], metrics["ebikes_available"]
+                metrics["pct_docked_classic"], metrics["classic_available"]
             ),
-            _fmt_delta(deltas.get("pct_ebike_availability"), as_pp=True),
+            _fmt_delta(deltas.get("pct_docked_classic"), as_pp=True),
         ),
         (
-            "% Classic availability",
+            "Docked E-bikes",
+            "",
             _fmt_pct_with_count(
-                metrics["pct_classic_availability"], metrics["classic_available"]
+                metrics["pct_docked_ebike"], metrics["ebikes_available"]
             ),
-            _fmt_delta(deltas.get("pct_classic_availability"), as_pp=True),
+            _fmt_delta(deltas.get("pct_docked_ebike"), as_pp=True),
+        ),
+        (
+            "Free-floating",
+            "",
+            _fmt_pct_with_count(
+                metrics["pct_free_range"], metrics["free_bikes_total"]
+            ),
+            _fmt_delta(deltas.get("pct_free_range"), as_pp=True),
+        ),
+        (
+            "Low-range bikes",
+            "Free-floating with ≤5 km left",
+            _fmt_pct_with_count(
+                metrics["pct_low_range"], metrics["low_range_bikes"]
+            ),
+            _fmt_delta(deltas.get("pct_low_range"), as_pp=True),
+        ),
+        (
+            "Avg. distance to station",
+            "Free-floating → nearest station",
+            _fmt_distance_m(metrics.get("avg_dist_to_station_m")),
+            _fmt_delta(deltas.get("avg_dist_to_station_m"), as_meters=True),
+        ),
+        (
+            "Disabled bikes",
+            "Docked + free-floating",
+            _fmt_pct_with_count(
+                metrics["pct_disabled_bikes"], metrics["disabled_bikes_total"]
+            ),
+            _fmt_delta(deltas.get("pct_disabled_bikes"), as_pp=True),
         ),
     ]
 

@@ -84,6 +84,20 @@ def apply_layout_styles() -> None:
             .lm-header a {
                 color: #1f6f54 !important;
             }
+
+            /* Keep page content close under the view switcher */
+            div[data-testid="stSegmentedControl"] {
+                margin-bottom: 0.15rem !important;
+            }
+            div[data-testid="stVerticalBlock"] > div:has(> div[data-testid="stSegmentedControl"]) {
+                margin-bottom: 0 !important;
+                padding-bottom: 0 !important;
+            }
+            .stCaptionContainer,
+            [data-testid="stCaptionContainer"] {
+                margin-top: 0.15rem !important;
+                margin-bottom: 0.35rem !important;
+            }
         </style>
         """,
         unsafe_allow_html=True,
