@@ -7,36 +7,109 @@ import pandas as pd
 import streamlit as st
 
 
+# Two-line time axis: clock time on top, calendar day underneath. Midnight
+# ticks drop the time, which is redundant once the axis steps by whole days.
+TIME_AXIS_LABEL_EXPR = (
+    "[timeFormat(datum.value, '%H') == '00' ? '' "
+    ": timeFormat(datum.value, '%-I %p'), "
+    "timeFormat(datum.value, '%b %-d')]"
+)
+
+BIKE_SERIES = ["Docked classic", "Docked e-bikes", "Free-floating"]
+SERIES_COLORS = {
+    "Docked classic": "#285ab4",
+    "Docked e-bikes": "#1f6f54",
+    "Free-floating": "#783cc0",
+    "Available docks": "#7a828a",
+}
+
+
 def render_availability_over_time(ts: pd.DataFrame) -> None:
+    """Rideable fleet split by type, with dock supply as a separate line."""
     if ts.empty:
         st.info("No historical snapshots in this range.")
         return
 
-    df = ts.melt(
+    label_map = {
+        "classic_available": "Docked classic",
+        "ebikes_available": "Docked e-bikes",
+        "free_floating": "Free-floating",
+    }
+    available = [col for col in label_map if col in ts.columns]
+
+    bikes = ts.melt(
         id_vars=["timestamp"],
-        value_vars=["bikes_available", "ebikes_available", "docks_available"],
+        value_vars=available,
         var_name="metric",
         value_name="count",
     )
-    label_map = {
-        "bikes_available": "Bikes",
-        "ebikes_available": "E-bikes",
-        "docks_available": "Docks",
-    }
-    df["metric"] = df["metric"].map(label_map)
-    df["datetime"] = pd.to_datetime(df["timestamp"], format="%Y-%m-%d-%H:00")
+    bikes["series"] = bikes["metric"].map(label_map)
+    bikes["datetime"] = pd.to_datetime(bikes["timestamp"], format="%Y-%m-%d-%H:00")
+
+    docks = ts[["timestamp", "docks_available"]].rename(
+        columns={"docks_available": "count"}
+    )
+    docks["series"] = "Available docks"
+    docks["datetime"] = pd.to_datetime(docks["timestamp"], format="%Y-%m-%d-%H:00")
+
+    domain = [*[s for s in BIKE_SERIES if s in set(bikes["series"])], "Available docks"]
+    color = alt.Color(
+        "series:N",
+        title=None,
+        scale=alt.Scale(domain=domain, range=[SERIES_COLORS[s] for s in domain]),
+        sort=domain,
+        legend=alt.Legend(
+            orient="bottom",
+            direction="horizontal",
+            symbolType="square",
+            offset=6,
+        ),
+    )
+    x = alt.X(
+        "datetime:T",
+        title=None,
+        axis=alt.Axis(labelExpr=TIME_AXIS_LABEL_EXPR, labelPadding=6),
+    )
+
+    bike_area = (
+        alt.Chart(bikes)
+        .mark_area(line={"strokeWidth": 1}, opacity=0.85)
+        .encode(
+            x=x,
+            y=alt.Y(
+                "count:Q",
+                title="Bikes and docks",
+                stack="zero",
+                scale=alt.Scale(nice=True),
+            ),
+            color=color,
+            order=alt.Order("series:N", sort="descending"),
+            tooltip=[
+                alt.Tooltip("datetime:T", title="Hour", format="%b %-d, %-I %p"),
+                alt.Tooltip("series:N", title="Series"),
+                alt.Tooltip("count:Q", title="Count", format=","),
+            ],
+        )
+    )
+    dock_line = (
+        alt.Chart(docks)
+        .mark_line(strokeWidth=2, strokeDash=[5, 3])
+        .encode(
+            x=x,
+            y=alt.Y("count:Q", title="Bikes and docks"),
+            color=color,
+            tooltip=[
+                alt.Tooltip("datetime:T", title="Hour", format="%b %-d, %-I %p"),
+                alt.Tooltip("series:N", title="Series"),
+                alt.Tooltip("count:Q", title="Count", format=","),
+            ],
+        )
+    )
 
     chart = (
-        alt.Chart(df)
-        .mark_line()
-        .encode(
-            x=alt.X("datetime:T", title="Time"),
-            y=alt.Y("count:Q", title="Count"),
-            color=alt.Color("metric:N", title=""),
-            tooltip=["datetime:T", "metric:N", "count:Q"],
-        )
-        .properties(height=320)
-        .interactive()
+        (bike_area + dock_line)
+        .properties(height=340, padding={"left": 4, "right": 12, "top": 4, "bottom": 8})
+        .configure_view(strokeWidth=0)
     )
     st.altair_chart(chart, width="stretch")
 

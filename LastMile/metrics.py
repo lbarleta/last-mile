@@ -454,14 +454,53 @@ class LastMileMetrics:
         """Backward-compatible alias for station status mix by region."""
         return self.get_station_status_by_region()
 
-    def get_availability_timeseries(self, hours: Optional[int] = 24) -> pd.DataFrame:
+    def list_regions(self) -> list[str]:
+        """Station regions available for filtering."""
+        return queries.list_regions(self.conn)
+
+    def get_availability_timeseries(
+        self, hours: Optional[int] = 24, region: Optional[str] = None
+    ) -> pd.DataFrame:
+        """
+        Hourly availability, split into the parts that make up the fleet.
+
+        Docked bikes are reported as ``classic_available`` + ``ebikes_available``
+        (GBFS counts e-bikes inside ``num_bikes_available``), and free-floating
+        bikes are added as their own series so the three stack into the total
+        rideable fleet without double counting.
+        """
         latest = self.get_latest_timestamp()
         since = queries.cutoff_timestamp(hours, self.timezone, latest) if latest else None
-        return queries.get_availability_timeseries(self.conn, since=since)
+        docked = queries.get_availability_timeseries(
+            self.conn, since=since, region=region
+        )
+        if docked.empty:
+            return docked
 
-    def get_hourly_patterns(self, hours: Optional[int] = 24 * 7) -> pd.DataFrame:
+        free = queries.get_free_bike_timeseries(
+            self.conn, since=since, region=region
+        )
+        merged = docked.merge(free, on="timestamp", how="left")
+        merged["free_floating"] = merged["free_floating"].fillna(0).astype(int)
+        merged["total_bikes"] = (
+            merged["classic_available"]
+            + merged["ebikes_available"]
+            + merged["free_floating"]
+        )
+        return merged
+
+    def get_hourly_patterns(
+        self,
+        hours: Optional[int] = 24 * 7,
+        region: Optional[str] = None,
+        timeseries: Optional[pd.DataFrame] = None,
+    ) -> pd.DataFrame:
         """Average system availability by clock hour (0-23)."""
-        ts = self.get_availability_timeseries(hours=hours)
+        ts = (
+            self.get_availability_timeseries(hours=hours, region=region)
+            if timeseries is None
+            else timeseries
+        )
         if ts.empty:
             return ts
         df = ts.copy()
@@ -469,7 +508,7 @@ class LastMileMetrics:
         grouped = (
             df.groupby("hour", as_index=False)
             .agg(
-                avg_bikes=("bikes_available", "mean"),
+                avg_bikes=("total_bikes", "mean"),
                 avg_ebikes=("ebikes_available", "mean"),
                 avg_docks=("docks_available", "mean"),
                 avg_empty=("empty_stations", "mean"),
@@ -479,9 +518,18 @@ class LastMileMetrics:
         )
         return grouped
 
-    def get_daily_patterns(self, hours: Optional[int] = 24 * 28) -> pd.DataFrame:
+    def get_daily_patterns(
+        self,
+        hours: Optional[int] = 24 * 28,
+        region: Optional[str] = None,
+        timeseries: Optional[pd.DataFrame] = None,
+    ) -> pd.DataFrame:
         """Average system availability by day of week."""
-        ts = self.get_availability_timeseries(hours=hours)
+        ts = (
+            self.get_availability_timeseries(hours=hours, region=region)
+            if timeseries is None
+            else timeseries
+        )
         if ts.empty:
             return ts
         df = ts.copy()
@@ -499,7 +547,7 @@ class LastMileMetrics:
         grouped = (
             df.groupby("day_of_week", as_index=False)
             .agg(
-                avg_bikes=("bikes_available", "mean"),
+                avg_bikes=("total_bikes", "mean"),
                 avg_ebikes=("ebikes_available", "mean"),
                 avg_docks=("docks_available", "mean"),
                 avg_empty=("empty_stations", "mean"),
@@ -511,9 +559,11 @@ class LastMileMetrics:
         )
         return grouped.sort_values("day_of_week")
 
-    def get_utilization_distribution(self) -> pd.DataFrame:
+    def get_utilization_distribution(
+        self, region: Optional[str] = None
+    ) -> pd.DataFrame:
         """Latest-snapshot station utilization rates."""
-        return queries.get_utilization_snapshot(self.conn)
+        return queries.get_utilization_snapshot(self.conn, region=region)
 
     # --- stockout forecast ------------------------------------------------
 

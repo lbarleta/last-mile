@@ -37,7 +37,23 @@ def ensure_indexes(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_station_status_station_ts "
         "ON station_status(station_id, timestamp)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bike_status_ts ON bike_status(timestamp)"
+    )
     conn.commit()
+
+
+def list_regions(conn: sqlite3.Connection) -> list[str]:
+    """Distinct station regions, most stations first."""
+    rows = conn.execute(
+        """
+        SELECT COALESCE(region, 'Unknown') AS region, COUNT(*) AS n
+        FROM stations
+        GROUP BY region
+        ORDER BY n DESC
+        """
+    ).fetchall()
+    return [row[0] for row in rows if row[0]]
 
 
 def _station_name_expr(conn: sqlite3.Connection) -> str:
@@ -400,15 +416,28 @@ def get_free_bike_snapshot(
 def get_availability_timeseries(
     conn: sqlite3.Connection,
     since: Optional[str] = None,
+    region: Optional[str] = None,
 ) -> pd.DataFrame:
-    """System-wide availability aggregated by hourly timestamp."""
+    """
+    Docked availability aggregated by hourly timestamp.
+
+    ``num_bikes_available`` in GBFS already includes e-bikes, so the classic
+    count is the difference; reporting both alongside the total would double
+    count. ``bikes_available`` stays the docked total for existing callers.
+    """
     clauses = []
     params: list = []
     if since is not None:
-        clauses.append("timestamp >= ?")
+        clauses.append("st.timestamp >= ?")
         params.append(since)
+    if region is not None:
+        clauses.append("COALESCE(s.region, 'Unknown') = ?")
+        params.append(region)
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    # Join and deduplicate unconditionally: the collector appends without a
+    # uniqueness constraint, so an unjoined COUNT(*) overstates the fleet and
+    # would not equal the sum of the regions.
     query = f"""
         SELECT
             timestamp,
@@ -418,12 +447,133 @@ def get_availability_timeseries(
             SUM(CASE WHEN num_bikes_available = 0 THEN 1 ELSE 0 END) AS empty_stations,
             SUM(CASE WHEN num_docks_available = 0 THEN 1 ELSE 0 END) AS full_stations,
             COUNT(*) AS station_count
-        FROM station_status
-        {where}
+        FROM (
+            SELECT
+                st.timestamp AS timestamp,
+                st.station_id AS station_id,
+                MAX(st.num_bikes_available) AS num_bikes_available,
+                MAX(st.num_ebikes_available) AS num_ebikes_available,
+                MAX(st.num_docks_available) AS num_docks_available
+            FROM station_status st
+            INNER JOIN stations s ON s.station_id = st.station_id
+            {where}
+            GROUP BY st.timestamp, st.station_id
+        )
         GROUP BY timestamp
         ORDER BY timestamp
     """
-    return pd.read_sql_query(query, conn, params=params)
+    df = pd.read_sql_query(query, conn, params=params)
+    if df.empty:
+        return df
+    df["classic_available"] = (
+        df["bikes_available"] - df["ebikes_available"]
+    ).clip(lower=0)
+    return df
+
+
+def _nearest_station_regions(
+    conn: sqlite3.Connection, lat: "np.ndarray", lon: "np.ndarray"
+) -> "np.ndarray":
+    """Region of the closest station to each coordinate."""
+    import numpy as np
+
+    stations = pd.read_sql_query(
+        """
+        SELECT COALESCE(region, 'Unknown') AS region, lat, lon
+        FROM stations
+        WHERE lat IS NOT NULL AND lon IS NOT NULL
+        """,
+        conn,
+    )
+    if stations.empty:
+        return np.full(len(lat), "Unknown", dtype=object)
+
+    st_lat = np.radians(stations["lat"].to_numpy(dtype=float))[None, :]
+    st_lon = np.radians(stations["lon"].to_numpy(dtype=float))[None, :]
+    regions = stations["region"].to_numpy()
+
+    out = np.empty(len(lat), dtype=object)
+    # Chunked so the pairwise matrix stays small regardless of input size.
+    for start in range(0, len(lat), 4096):
+        end = start + 4096
+        pt_lat = np.radians(lat[start:end])[:, None]
+        pt_lon = np.radians(lon[start:end])[:, None]
+        dlat = st_lat - pt_lat
+        dlon = st_lon - pt_lon
+        a = (
+            np.sin(dlat / 2) ** 2
+            + np.cos(pt_lat) * np.cos(st_lat) * np.sin(dlon / 2) ** 2
+        )
+        out[start:end] = regions[np.argmin(a, axis=1)]
+    return out
+
+
+def get_free_bike_timeseries(
+    conn: sqlite3.Connection,
+    since: Optional[str] = None,
+    region: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Free-floating bike count per hourly timestamp.
+
+    Free bikes carry no region, so when one is requested each bike is credited
+    to its nearest station's region. Coordinates are rounded to ~100 m first,
+    which collapses millions of rows into a few thousand distinct locations.
+    """
+    clauses = []
+    params: list = []
+    if since is not None:
+        clauses.append("timestamp >= ?")
+        params.append(since)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+    if region is None:
+        return pd.read_sql_query(
+            f"""
+            SELECT timestamp, COUNT(*) AS free_floating
+            FROM bike_status
+            {where}
+            GROUP BY timestamp
+            ORDER BY timestamp
+            """,
+            conn,
+            params=params,
+        )
+
+    cells = pd.read_sql_query(
+        f"""
+        SELECT timestamp,
+               ROUND(lat, 3) AS lat_r,
+               ROUND(lon, 3) AS lon_r,
+               COUNT(*) AS n
+        FROM bike_status
+        {where}
+        GROUP BY timestamp, lat_r, lon_r
+        """,
+        conn,
+        params=params,
+    )
+    if cells.empty:
+        return pd.DataFrame(columns=["timestamp", "free_floating"])
+
+    cells = cells.dropna(subset=["lat_r", "lon_r"])
+    unique = cells[["lat_r", "lon_r"]].drop_duplicates()
+    unique["region"] = _nearest_station_regions(
+        conn,
+        unique["lat_r"].to_numpy(dtype=float),
+        unique["lon_r"].to_numpy(dtype=float),
+    )
+    merged = cells.merge(unique, on=["lat_r", "lon_r"], how="left")
+    merged = merged[merged["region"] == region]
+    if merged.empty:
+        return pd.DataFrame(columns=["timestamp", "free_floating"])
+
+    return (
+        merged.groupby("timestamp", as_index=False)["n"]
+        .sum()
+        .rename(columns={"n": "free_floating"})
+        .sort_values("timestamp")
+    )
 
 
 def get_station_status_history(
@@ -456,13 +606,19 @@ def get_station_status_history(
     return pd.read_sql_query(query, conn, params=params)
 
 
-def get_utilization_snapshot(conn: sqlite3.Connection) -> pd.DataFrame:
+def get_utilization_snapshot(
+    conn: sqlite3.Connection, region: Optional[str] = None
+) -> pd.DataFrame:
     """Latest snapshot with utilization = bikes / (bikes + docks)."""
     df = get_latest_station_snapshot(conn)
     if df.empty:
         return df
-    capacity_proxy = df["num_bikes_available"] + df["num_docks_available"]
     df = df.copy()
+    if region is not None:
+        df = df[df["region"].fillna("Unknown") == region]
+        if df.empty:
+            return df
+    capacity_proxy = df["num_bikes_available"] + df["num_docks_available"]
     df["utilization"] = df["num_bikes_available"] / capacity_proxy.replace(0, pd.NA)
     return df
 

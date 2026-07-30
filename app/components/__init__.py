@@ -19,6 +19,15 @@ def format_snapshot_date(timestamp: str) -> str:
         return timestamp[:10]
 
 
+def format_snapshot_datetime(timestamp: str) -> str:
+    """Format YYYY-MM-DD-HH:00 as a readable date and hour."""
+    try:
+        dt = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
+    except ValueError:
+        return timestamp
+    return dt.strftime("%B %-d, %Y at %-I %p").replace("AM", "am").replace("PM", "pm")
+
+
 def resolve_db_path() -> str:
     """DB path from LASTMILE_DB env or project default (not shown in UI)."""
     return os.environ.get("LASTMILE_DB", DEFAULT_DB_PATH)
