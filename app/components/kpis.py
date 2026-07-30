@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from html import escape
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
@@ -11,31 +12,74 @@ def _inject_kpi_styles() -> None:
     st.markdown(
         """
         <style>
-            .kpi-row {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-                gap: 0.65rem;
-                margin-bottom: 0.75rem;
-            }
             .kpi-card {
+                position: relative;
                 border: 1px solid #d5d9de;
                 border-radius: 8px;
                 background: #ffffff;
                 padding: 0.75rem 0.85rem;
                 min-height: 4.5rem;
+                overflow: visible;
+            }
+            .kpi-row {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+                gap: 0.65rem;
+                margin-bottom: 0.75rem;
+                overflow: visible;
             }
             .kpi-label {
                 font-size: 0.75rem;
                 font-weight: 500;
                 color: #5c636b;
                 margin-bottom: 0.35rem;
+                padding-right: 1.1rem;
             }
-            .kpi-hint {
+            .kpi-help {
+                position: absolute;
+                top: 0.4rem;
+                right: 0.45rem;
+                width: 1rem;
+                height: 1rem;
+                border-radius: 50%;
+                border: 1px solid #c5ccd3;
+                color: #7a828a;
+                font-size: 0.68rem;
+                font-weight: 600;
+                line-height: 1rem;
+                text-align: center;
+                cursor: help;
+                background: #f7f8fa;
+                z-index: 5;
+            }
+            .kpi-help:hover {
+                color: #1c1f24;
+                border-color: #9aa1a9;
+            }
+            .kpi-tip {
+                display: none;
+                position: absolute;
+                top: calc(100% + 0.35rem);
+                right: 0;
+                min-width: 140px;
+                max-width: 200px;
+                padding: 0.4rem 0.55rem;
+                border-radius: 6px;
+                border: 1px solid #d5d9de;
+                background: #1c1f24;
+                color: #ffffff;
                 font-size: 0.68rem;
                 font-weight: 400;
-                color: #9aa1a9;
-                margin: 0.3rem 0 0 0;
-                line-height: 1.25;
+                line-height: 1.35;
+                text-align: left;
+                white-space: normal;
+                box-shadow: 0 4px 12px rgba(28, 31, 36, 0.18);
+                z-index: 20;
+                pointer-events: none;
+            }
+            .kpi-help:hover .kpi-tip,
+            .kpi-help:focus .kpi-tip {
+                display: block;
             }
             .kpi-value-row {
                 display: flex;
@@ -76,12 +120,14 @@ def _inject_kpi_styles() -> None:
                 margin: 0 0 1rem 0;
             }
             .kpi-hero-card {
+                position: relative;
                 border: 1px solid #d5d9de;
                 border-radius: 10px;
                 background: #ffffff;
                 padding: 1rem 1.75rem;
                 min-width: min(100%, 320px);
                 text-align: center;
+                overflow: visible;
             }
             .kpi-hero-label {
                 font-size: 0.85rem;
@@ -90,6 +136,7 @@ def _inject_kpi_styles() -> None:
                 text-transform: uppercase;
                 color: #5c636b;
                 margin-bottom: 0.35rem;
+                padding-right: 1.1rem;
             }
             .kpi-hero-value {
                 font-size: 2rem;
@@ -97,17 +144,27 @@ def _inject_kpi_styles() -> None:
                 color: #1c1f24;
                 line-height: 1.2;
             }
-            .kpi-hero-hint {
-                font-size: 0.72rem;
-                color: #9aa1a9;
-                margin-top: 0.35rem;
-            }
             .kpi-hero .kpi-value-row {
                 justify-content: center;
+            }
+            .kpi-hero-card .kpi-help {
+                top: 0.55rem;
+                right: 0.6rem;
             }
         </style>
         """,
         unsafe_allow_html=True,
+    )
+
+
+def _help_icon(hint: str) -> str:
+    if not hint:
+        return ""
+    return (
+        '<span class="kpi-help" tabindex="0" aria-label="More info">'
+        "?"
+        f'<span class="kpi-tip">{escape(hint)}</span>'
+        "</span>"
     )
 
 
@@ -167,13 +224,12 @@ def _fmt_delta(
 def _kpi_row(cards: List[Tuple[str, str, str, str]]) -> str:
     items = []
     for label, hint, value, delta in cards:
-        hint_html = f'<div class="kpi-hint">{hint}</div>' if hint else ""
         delta_html = delta or ""
         items.append(
-            f'<div class="kpi-card"><div class="kpi-label">{label}</div>'
+            f'<div class="kpi-card">{_help_icon(hint)}'
+            f'<div class="kpi-label">{label}</div>'
             f'<div class="kpi-value-row"><div class="kpi-value">{value}</div>'
-            f"{delta_html}</div>"
-            f"{hint_html}</div>"
+            f"{delta_html}</div></div>"
         )
     return f'<div class="kpi-row">{"".join(items)}</div>'
 
@@ -291,12 +347,12 @@ def render_live_kpis(metrics: Dict[str, Any]) -> None:
         f"""
         <div class="kpi-hero">
           <div class="kpi-hero-card">
+            {_help_icon("Area within 300 m (~3 min walk) of available bikes")}
             <div class="kpi-hero-label">Coverage (San Francisco)</div>
             <div class="kpi-value-row">
               <div class="kpi-hero-value">{coverage_pct:.1f}%</div>
               {coverage_delta}
             </div>
-            <div class="kpi-hero-hint">Area within 300 m (~3 min walk) of available bikes</div>
           </div>
         </div>
         """,
