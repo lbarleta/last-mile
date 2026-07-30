@@ -11,10 +11,17 @@ Hourly bike-share warehouse and Streamlit dashboard, built on open [GBFS](https:
 2. **Live Ops** — KPIs (with prior-hour deltas), regional availability mix chart
 3. **Map** — station map colored by empty / low / healthy / full
 4. **Historical** — availability trends, peak hours, day-of-week patterns, utilization
+5. **Forecast** *(under development — hidden from the dashboard)* — per-station probability of running empty or full in the next 6 hours, with a rolling-origin backtest against naive baselines
 
 ```text
-GBFS ──► scripts/collect.py ──► data/lastmile-sf.db ──► Streamlit (read-only)
+GBFS ──► scripts/collect.py ──┐
+                              ├─► data/lastmile-sf.db ──► Streamlit (read-only)
+Open-Meteo ──► weather ───────┤
+                              │
+              scripts/forecast.py (train / backtest / score)
 ```
+
+Models are trained and scored offline; the dashboard only reads stored predictions.
 
 ## Setup
 
@@ -38,14 +45,52 @@ python scripts/collect.py --setup
 python scripts/collect.py
 ```
 
+## Stockout forecast (under development)
+
+The pipeline below works end to end, but the **Forecast** view is currently
+hidden from the dashboard while the presentation is reworked. Re-enable it by
+adding `"Forecast"` back to the options list in
+[`app/main.py`](app/main.py); the view and its dispatch branch are still in place.
+
+Predicts, for every station and each of the next six hours, the probability it
+will be **empty** (no bikes to take) or **full** (no docks to return to) — the
+proactive counterpart to the Live Ops problematic-stations table.
+
+```bash
+# One-time: pull historical weather for the span of your snapshots
+python scripts/backfill_weather.py
+
+# Backtest, fit, and score the latest snapshot
+python scripts/forecast.py --all
+```
+
+Hourly, after `collect.py`:
+
+```bash
+python scripts/backfill_weather.py --refresh   # recent + forecast hours
+python scripts/forecast.py --score             # reuse the saved model
+```
+
+Refit periodically (weekly is plenty) with `python scripts/forecast.py --train --backtest`.
+
+Two gradient-boosted classifiers (one per failure mode) take the horizon as an
+input feature, so a single model covers all six hours. Inputs are the station's
+current occupancy and its recent history, calendar context, weather at the
+target hour, and the station's own trailing stockout rate for that hour of day.
+
+Every run is scored against two references on held-out folds — **persistence**
+("assume nothing changes") and **climatology** (the station's own rate at that
+hour over the last four weeks) — and the results are shown in the dashboard
+rather than hidden in a notebook.
+
 ## Run the dashboard
 
 ```bash
 streamlit run app/main.py
 ```
 
-Opens on **Live Ops**; use the top control for **Map** and **Historical**. Optional:
-`export LASTMILE_DB=/path/to/your.db` (not shown in the UI).
+Opens on **Live Ops**; use the top control for **Map** and **Historical**.
+Optional: `export LASTMILE_DB=/path/to/your.db` (not shown in the UI).
 
 ## Library usage
 
@@ -77,6 +122,13 @@ with LastMileMetrics(db_path=DEFAULT_DB_PATH) as metrics:
 | `stations` | Static station info (name, capacity, lat/lon, region) |
 | `station_status` | Hourly availability per station (`timestamp` = `YYYY-MM-DD-HH:00`) |
 | `bike_status` | Hourly free-bike locations and status |
+| `weather` | Hourly San Francisco weather from Open-Meteo (archive + forecast) |
+| `forecast_stockout` | Per-station empty/full probabilities by forecast horizon |
+| `forecast_metrics` | Rolling-origin backtest scores for the model and baselines |
+| `forecast_calibration` | Reliability bins behind the calibration chart |
+
+All timestamps are local (`America/Los_Angeles`) hourly keys, which makes joins
+across these tables direct.
 
 ## License
 

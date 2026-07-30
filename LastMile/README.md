@@ -11,7 +11,17 @@ LastMile/
   db.py         read-only SQL helpers and indexes
   metrics.py    live-ops + historical KPIs (LastMileMetrics)
   coverage.py   San Francisco 3-min walk-shed geometry
+  weather.py    Open-Meteo hourly weather cache (archive + forecast)
+  features.py   station panel + feature engineering for forecasting
+  forecast.py   stockout model: train, backtest, score, store
 ```
+
+Forecasting runs offline via [`scripts/forecast.py`](../scripts/forecast.py) and
+writes to `forecast_stockout`, `forecast_metrics`, and `forecast_calibration`.
+`LastMileMetrics` exposes those tables to the dashboard through
+`get_forecast`, `get_forecast_outlook`, `get_forecast_watchlist`,
+`get_forecast_evaluation`, and `get_forecast_calibration` — the app never
+trains or scores.
 
 Public imports:
 
@@ -26,4 +36,5 @@ from LastMile import (
 ```
 
 The Streamlit dashboard lives in [`app/`](../app/) (`streamlit run app/main.py`).  
-Hourly collection: [`scripts/collect.py`](../scripts/collect.py).
+Hourly collection: [`scripts/collect.py`](../scripts/collect.py).  
+Weather cache: [`scripts/backfill_weather.py`](../scripts/backfill_weather.py).

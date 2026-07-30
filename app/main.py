@@ -14,7 +14,7 @@ from components import (
     get_metrics,
     resolve_db_path,
 )
-from views import historical, live_ops, map_view
+from views import forecast, historical, live_ops, map_view
 
 st.set_page_config(
     page_title="Last Mile",
@@ -55,6 +55,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# "Forecast" is under development and stays out of the options list; the
+# dispatch branch below keeps it one edit away from being re-enabled.
 view = st.segmented_control(
     "View",
     options=["Live Ops", "Map", "Historical"],
@@ -64,6 +66,8 @@ view = st.segmented_control(
 
 if view == "Map":
     map_view.render(metrics_svc)
+elif view == "Forecast":
+    forecast.render(metrics_svc)
 elif view == "Historical":
     historical.render(metrics_svc)
 else:

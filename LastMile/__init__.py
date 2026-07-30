@@ -9,6 +9,9 @@ Modules:
 - db: read-only query helpers and indexes
 - metrics: live-ops and historical metrics
 - coverage: San Francisco walk-shed coverage
+- weather: Open-Meteo hourly weather cache
+- features: feature engineering for stockout forecasting
+- forecast: stockout model training, backtesting, and scoring
 
 Public classes:
 - LastMileSetup, LastMileManager, LastMileUtils, LastMileMetrics

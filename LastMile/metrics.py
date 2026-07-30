@@ -10,11 +10,13 @@ import pandas as pd
 from .config import (
     DEFAULT_DB_PATH,
     DEFAULT_TIMEZONE,
+    FORECAST_RISK_THRESHOLD,
     LOW_RANGE_METERS,
     TIMESTAMP_FORMAT,
 )
 from . import db as queries
 from . import coverage as coverage_mod
+from . import forecast as forecast_mod
 
 
 class LastMileMetrics:
@@ -512,6 +514,111 @@ class LastMileMetrics:
     def get_utilization_distribution(self) -> pd.DataFrame:
         """Latest-snapshot station utilization rates."""
         return queries.get_utilization_snapshot(self.conn)
+
+    # --- stockout forecast ------------------------------------------------
+
+    def get_forecast(self, origin_timestamp: Optional[str] = None) -> pd.DataFrame:
+        """Stored per-station stockout probabilities for one forecast origin."""
+        return forecast_mod.load_predictions(self.conn, origin_timestamp)
+
+    def get_forecast_origin(self) -> Optional[str]:
+        return forecast_mod.latest_forecast_origin(self.conn)
+
+    def get_forecast_outlook(
+        self,
+        forecast: Optional[pd.DataFrame] = None,
+        threshold: float = FORECAST_RISK_THRESHOLD,
+    ) -> pd.DataFrame:
+        """Count of stations above the risk threshold at each forecast hour."""
+        df = self.get_forecast() if forecast is None else forecast
+        if df.empty:
+            return pd.DataFrame(
+                columns=["horizon", "target_timestamp", "at_risk_empty", "at_risk_full"]
+            )
+        return (
+            df.assign(
+                at_risk_empty=(df["p_empty"] >= threshold).astype(int),
+                at_risk_full=(df["p_full"] >= threshold).astype(int),
+            )
+            .groupby(["horizon", "target_timestamp"], as_index=False)
+            .agg(
+                at_risk_empty=("at_risk_empty", "sum"),
+                at_risk_full=("at_risk_full", "sum"),
+                expected_empty=("p_empty", "sum"),
+                expected_full=("p_full", "sum"),
+                stations=("station_id", "count"),
+            )
+            .sort_values("horizon")
+        )
+
+    def get_forecast_watchlist(
+        self,
+        forecast: Optional[pd.DataFrame] = None,
+        threshold: float = FORECAST_RISK_THRESHOLD,
+    ) -> pd.DataFrame:
+        """
+        Stations predicted to run empty or full, ranked by peak risk.
+
+        ``lead_hours`` is how far ahead the first threshold crossing is — the
+        dispatch window an operator actually has.
+        """
+        df = self.get_forecast() if forecast is None else forecast
+        columns = [
+            "station_id",
+            "name",
+            "region",
+            "bikes_now",
+            "docks_now",
+            "issue",
+            "peak_risk",
+            "lead_hours",
+            "first_hour",
+        ]
+        if df.empty:
+            return pd.DataFrame(columns=columns)
+
+        flagged = df[(df["p_empty"] >= threshold) | (df["p_full"] >= threshold)]
+        if flagged.empty:
+            return pd.DataFrame(columns=columns)
+
+        rows = []
+        for station_id, group in flagged.groupby("station_id", sort=False):
+            group = group.sort_values("horizon")
+            peak_empty = float(group["p_empty"].max())
+            peak_full = float(group["p_full"].max())
+            issue = "Empty" if peak_empty >= peak_full else "Full"
+            risk_col = "p_empty" if issue == "Empty" else "p_full"
+            crossing = group[group[risk_col] >= threshold]
+            if crossing.empty:
+                crossing = group
+            first = crossing.iloc[0]
+            head = group.iloc[0]
+            rows.append(
+                {
+                    "station_id": station_id,
+                    "name": head.get("name") or station_id,
+                    "region": head.get("region") or "Unknown",
+                    "bikes_now": head.get("bikes_now"),
+                    "docks_now": head.get("docks_now"),
+                    "issue": issue,
+                    "peak_risk": max(peak_empty, peak_full),
+                    "lead_hours": int(first["horizon"]),
+                    "first_hour": first["target_timestamp"],
+                }
+            )
+
+        out = pd.DataFrame(rows, columns=columns)
+        return out.sort_values(
+            ["peak_risk", "lead_hours"], ascending=[False, True]
+        ).reset_index(drop=True)
+
+    def get_forecast_evaluation(self) -> pd.DataFrame:
+        """Rolling-origin backtest metrics for the model and its baselines."""
+        return forecast_mod.load_metrics(self.conn)
+
+    def get_forecast_calibration(self) -> pd.DataFrame:
+        """Pooled reliability bins from the most recent backtest."""
+        return forecast_mod.load_calibration(self.conn)
 
     # Backwards-compatible alias used by quick_start / older callers
     def get_system_metrics(self, timestamp: Optional[str] = None) -> Dict[str, Any]:
