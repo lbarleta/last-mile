@@ -1,4 +1,4 @@
-"""Historical analytics from hourly station_status snapshots."""
+"""Trends view — availability, station status, and bike utilization over time."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ import streamlit as st
 from components import format_snapshot_datetime
 from components.charts import (
     render_availability_over_time,
-    render_bikes_out_by_day,
-    render_bikes_out_by_hour,
-    render_failure_by_hour,
+    render_problematic_by_hour,
     render_station_reliability,
     render_station_status_mix,
+    render_utilization_by_day,
+    render_utilization_by_hour,
 )
 from LastMile import LastMileMetrics
 
@@ -63,8 +63,14 @@ def _load_problematic_by_hour(
     latest: Optional[str],
 ) -> pd.DataFrame:
     """3h lookback problematic rates by clock hour; cached for the same reason."""
-    return _metrics_svc.get_failure_by_hour(hours=hours, region=region)
+    return _metrics_svc.get_problematic_by_hour(hours=hours, region=region)
 
+
+AVAILABILITY_BLURB = (
+    "Rideable bikes stacked by type, with available docks as a separate line. "
+    "Classic counts are net of e-bikes, and free-floating bikes are treated as "
+    "San Francisco inventory."
+)
 
 STATION_STATUS_BLURB = (
     "An ideal station always has bikes to take and docks to return to, with a "
@@ -73,16 +79,14 @@ STATION_STATUS_BLURB = (
     "failures."
 )
 
-
-def _bikes_out_blurb() -> str:
-    return (
-        "This is an estimate, since the GBFS feed doesn't report fleet size or "
-        "which bikes are being ridden, serviced, or moved by van. We assume a "
-        "closed fleet, using the highest count seen overnight (midnight–4am) as "
-        "the baseline. Bikes in use = baseline minus bikes currently available. "
-        "We re-estimate this baseline daily so fleet growth doesn't get mistaken "
-        "for demand."
-    )
+UTILIZATION_BLURB = (
+    "This is an estimate, since the GBFS feed doesn't report fleet size or "
+    "which bikes are being ridden, serviced, or moved by van. We assume a "
+    "closed fleet, using the highest count seen overnight (midnight–4am) as "
+    "the baseline. Bikes in use = baseline minus bikes currently available. "
+    "We re-estimate this baseline daily so fleet growth doesn't get mistaken "
+    "for demand."
+)
 
 
 def render(metrics_svc: LastMileMetrics) -> None:
@@ -111,13 +115,13 @@ def render(metrics_svc: LastMileMetrics) -> None:
                 if region is None
                 else _load_timeseries(metrics_svc, hours, None, latest)
             )
-            bikes_out = metrics_svc.get_bikes_out_patterns(timeseries=systemwide)
+            utilization = metrics_svc.get_bike_utilization(timeseries=systemwide)
             reliability = _load_reliability(metrics_svc, hours, region, latest)
-            failure_by_hour = _load_problematic_by_hour(
+            problematic = _load_problematic_by_hour(
                 metrics_svc, hours, region, latest
             )
         except Exception as exc:
-            st.error(f"Failed to load historical metrics: {exc}")
+            st.error(f"Failed to load trends metrics: {exc}")
             return
 
     if timeseries.empty:
@@ -132,12 +136,13 @@ def render(metrics_svc: LastMileMetrics) -> None:
     )
 
     st.subheader("Bike and Dock Availability")
+    st.caption(AVAILABILITY_BLURB)
     render_availability_over_time(timeseries)
 
     st.subheader("Stations")
     st.caption(STATION_STATUS_BLURB)
 
-    c1, c2, c3 = st.columns(3, gap="large")
+    c1, c2, c3 = st.columns(3, gap="medium")
     with c1:
         st.markdown("##### Status over time")
         st.caption("Share of stations in each state, hour by hour")
@@ -148,7 +153,7 @@ def render(metrics_svc: LastMileMetrics) -> None:
             "Share of stations empty or full in any of the trailing 3 daytime "
             "hours (7am–8pm)"
         )
-        render_failure_by_hour(failure_by_hour)
+        render_problematic_by_hour(problematic)
     with c3:
         st.markdown("##### Recurrent Failures")
         st.caption(
@@ -158,14 +163,14 @@ def render(metrics_svc: LastMileMetrics) -> None:
         render_station_reliability(reliability)
 
     st.subheader("Bike Utilization (system-wide)")
-    st.caption(_bikes_out_blurb())
+    st.caption(UTILIZATION_BLURB)
 
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns(2, gap="medium")
     with c1:
         st.markdown("##### Peak hours")
         st.caption("Average bikes in use by hour of day")
-        render_bikes_out_by_hour(bikes_out["by_hour"])
+        render_utilization_by_hour(utilization["by_hour"])
     with c2:
         st.markdown("##### Peak days")
         st.caption("Average bikes in use by day of week")
-        render_bikes_out_by_day(bikes_out["by_day"])
+        render_utilization_by_day(utilization["by_day"])

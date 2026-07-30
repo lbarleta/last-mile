@@ -545,36 +545,6 @@ def get_free_bike_timeseries(
     )
 
 
-def get_station_status_history(
-    conn: sqlite3.Connection,
-    since: Optional[str] = None,
-) -> pd.DataFrame:
-    """
-    Per-station status rows for pattern analysis.
-
-    Prefer get_availability_timeseries for system charts; use this only when
-    station-level history is required and the window is bounded.
-    """
-    clauses = []
-    params: list = []
-    if since is not None:
-        clauses.append("timestamp >= ?")
-        params.append(since)
-
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    query = f"""
-        SELECT
-            station_id,
-            num_bikes_available,
-            num_docks_available,
-            num_ebikes_available,
-            timestamp
-        FROM station_status
-        {where}
-    """
-    return pd.read_sql_query(query, conn, params=params)
-
-
 def _shift_timestamp(timestamp: str, hours: int) -> str:
     """Shift a snapshot key by a whole number of hours."""
     dt = datetime.strptime(timestamp, TIMESTAMP_FORMAT) + timedelta(hours=hours)
@@ -715,25 +685,8 @@ def get_station_reliability(
         return df
     df["pct_empty"] = df["hours_empty"] / df["hours"] * 100.0
     df["pct_full"] = df["hours_full"] / df["hours"] * 100.0
-    df["pct_unusable"] = df["pct_empty"] + df["pct_full"]
-    return df.sort_values("pct_unusable", ascending=False)
-
-
-def get_utilization_snapshot(
-    conn: sqlite3.Connection, region: Optional[str] = None
-) -> pd.DataFrame:
-    """Latest snapshot with utilization = bikes / (bikes + docks)."""
-    df = get_latest_station_snapshot(conn)
-    if df.empty:
-        return df
-    df = df.copy()
-    if region is not None:
-        df = df[df["region"].fillna("Unknown") == region]
-        if df.empty:
-            return df
-    capacity_proxy = df["num_bikes_available"] + df["num_docks_available"]
-    df["utilization"] = df["num_bikes_available"] / capacity_proxy.replace(0, pd.NA)
-    return df
+    df["pct_failure"] = df["pct_empty"] + df["pct_full"]
+    return df.sort_values("pct_failure", ascending=False)
 
 
 def avg_distance_to_nearest_station_m(

@@ -40,7 +40,7 @@ def resolve_db_path() -> str:
 
 
 def apply_layout_styles() -> None:
-    """Hide sidebar/chrome and tighten header spacing."""
+    """Hide sidebar/chrome and apply compact shared page styles."""
     st.markdown(
         """
         <style>
@@ -64,54 +64,93 @@ def apply_layout_styles() -> None:
             }
 
             .block-container {
-                padding-top: 0.75rem !important;
-                padding-bottom: 2rem !important;
+                padding-top: 0.65rem !important;
+                padding-bottom: 1.75rem !important;
             }
 
-            /* Compact title + subtitle hierarchy */
+            /* App header: clearer separation from the view below */
             .lm-header {
-                margin: 0 0 0.25rem 0;
+                margin: 0 0 0.85rem 0;
+                padding: 0.1rem 0 0.95rem 0;
+                border-bottom: 1px solid #dde3ea;
             }
             .lm-header .lm-title {
-                font-size: 2.15rem !important;
+                font-size: 2rem !important;
                 font-weight: 700 !important;
-                line-height: 1.15 !important;
+                line-height: 1.1 !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 color: #1c1f24 !important;
-                letter-spacing: -0.02em;
+                letter-spacing: -0.025em;
             }
             .lm-header .lm-subtitle {
-                font-size: 1.1rem !important;
+                font-size: 0.95rem !important;
                 font-weight: 600 !important;
                 line-height: 1.25 !important;
-                margin: 0.2rem 0 0.7rem 0 !important;
+                margin: 0.2rem 0 0.55rem 0 !important;
                 padding: 0 !important;
-                color: #4a5058 !important;
+                color: #1f6f54 !important;
+                letter-spacing: 0.01em;
             }
             .lm-header .lm-blurb {
-                margin: 0 0 0.85rem 0 !important;
+                margin: 0 !important;
+                max-width: 52rem;
                 line-height: 1.45 !important;
-                font-size: 1rem !important;
+                font-size: 0.92rem !important;
                 font-weight: 400 !important;
-                color: #1c1f24 !important;
+                color: #3d4450 !important;
             }
             .lm-header a {
                 color: #1f6f54 !important;
+                text-decoration: underline;
+                text-underline-offset: 2px;
             }
 
-            /* Keep page content close under the view switcher */
+            /* View switcher sits just under the header rule */
             div[data-testid="stSegmentedControl"] {
-                margin-bottom: 0.15rem !important;
+                margin-top: 0.15rem !important;
+                margin-bottom: 0.55rem !important;
             }
             div[data-testid="stVerticalBlock"] > div:has(> div[data-testid="stSegmentedControl"]) {
                 margin-bottom: 0 !important;
                 padding-bottom: 0 !important;
             }
+
+            /* Shared section hierarchy — compact, same on Live Ops and Trends */
+            .stMarkdown h2,
+            [data-testid="stHeading"] h2 {
+                font-size: 1.15rem !important;
+                font-weight: 600 !important;
+                line-height: 1.25 !important;
+                letter-spacing: -0.01em;
+                color: #1c1f24 !important;
+                margin: 0.95rem 0 0.15rem 0 !important;
+                padding: 0 !important;
+            }
+            .stMarkdown h5,
+            [data-testid="stHeading"] h5 {
+                font-size: 0.9rem !important;
+                font-weight: 600 !important;
+                line-height: 1.25 !important;
+                color: #2a3038 !important;
+                margin: 0.1rem 0 0 !important;
+                padding: 0 !important;
+            }
             .stCaptionContainer,
             [data-testid="stCaptionContainer"] {
-                margin-top: 0.15rem !important;
-                margin-bottom: 0.35rem !important;
+                margin-top: 0.05rem !important;
+                margin-bottom: 0.3rem !important;
+            }
+            .stCaptionContainer p,
+            [data-testid="stCaptionContainer"] p {
+                font-size: 0.82rem !important;
+                line-height: 1.4 !important;
+                color: #5c636b !important;
+            }
+
+            /* Pull successive Streamlit blocks a little closer */
+            div[data-testid="stElementContainer"] {
+                margin-bottom: 0.15rem !important;
             }
         </style>
         """,

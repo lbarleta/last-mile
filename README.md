@@ -10,7 +10,7 @@ Hourly bike-share warehouse and Streamlit dashboard, built on open [GBFS](https:
 1. **Collect** — pull station and free-bike status from Bay Wheels GBFS once per hour into SQLite
 2. **Live Ops** — headline supply balance and walk-shed coverage, KPIs (with prior-hour deltas), regional availability mix chart
 3. **Map** — station map colored by empty / low / healthy / full
-4. **Historical** — availability trends, station status mix and per-station reliability, estimated bike utilization by hour and weekday
+4. **Trends** — availability trends, station status mix and per-station reliability, estimated bike utilization by hour and weekday
 5. **Forecast** *(under development — hidden from the dashboard)* — per-station probability of running empty or full in the next 6 hours, with a rolling-origin backtest against naive baselines
 
 ```text
@@ -89,7 +89,7 @@ rather than hidden in a notebook.
 streamlit run app/main.py
 ```
 
-Opens on **Live Ops**; use the top control for **Map** and **Historical**.
+Opens on **Live Ops**; use the top control for **Map** and **Trends**.
 Optional: `export LASTMILE_DB=/path/to/your.db` (not shown in the UI).
 
 Live Ops leads with two headline metrics. **Bikes per 10 docks** is fleet

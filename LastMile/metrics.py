@@ -510,10 +510,6 @@ class LastMileMetrics:
             result[f"pct_{status}"] = result[status] / result["total"] * 100.0
         return result.sort_values("total", ascending=False)
 
-    def get_empty_full_by_region(self) -> pd.DataFrame:
-        """Backward-compatible alias for station status mix by region."""
-        return self.get_station_status_by_region()
-
     def list_regions(self) -> list[str]:
         """Station regions available for filtering."""
         return queries.list_regions(self.conn)
@@ -556,75 +552,14 @@ class LastMileMetrics:
         )
         return merged
 
-    def get_hourly_patterns(
-        self,
-        hours: Optional[int] = 24 * 7,
-        region: Optional[str] = None,
-        timeseries: Optional[pd.DataFrame] = None,
-    ) -> pd.DataFrame:
-        """Average system availability by clock hour (0-23)."""
-        ts = (
-            self.get_availability_timeseries(hours=hours, region=region)
-            if timeseries is None
-            else timeseries
-        )
-        if ts.empty:
-            return ts
-        df = ts.copy()
-        df["hour"] = df["timestamp"].str.slice(11, 13).astype(int)
-        grouped = (
-            df.groupby("hour", as_index=False)
-            .agg(
-                avg_bikes=("total_bikes", "mean"),
-                avg_ebikes=("ebikes_available", "mean"),
-                avg_docks=("docks_available", "mean"),
-                avg_empty=("empty_stations", "mean"),
-                samples=("timestamp", "count"),
-            )
-            .sort_values("hour")
-        )
-        return grouped
-
-    def get_daily_patterns(
-        self,
-        hours: Optional[int] = 24 * 28,
-        region: Optional[str] = None,
-        timeseries: Optional[pd.DataFrame] = None,
-    ) -> pd.DataFrame:
-        """Average system availability by day of week."""
-        ts = (
-            self.get_availability_timeseries(hours=hours, region=region)
-            if timeseries is None
-            else timeseries
-        )
-        if ts.empty:
-            return ts
-        df = ts.copy()
-        df["datetime"] = pd.to_datetime(df["timestamp"], format=TIMESTAMP_FORMAT)
-        df["day_of_week"] = df["datetime"].dt.day_name()
-        grouped = (
-            df.groupby("day_of_week", as_index=False)
-            .agg(
-                avg_bikes=("total_bikes", "mean"),
-                avg_ebikes=("ebikes_available", "mean"),
-                avg_docks=("docks_available", "mean"),
-                avg_empty=("empty_stations", "mean"),
-                samples=("timestamp", "count"),
-            )
-        )
-        grouped["day_of_week"] = pd.Categorical(
-            grouped["day_of_week"], categories=DAY_ORDER, ordered=True
-        )
-        return grouped.sort_values("day_of_week")
-
-    def get_bikes_out_patterns(
+    def get_bike_utilization(
         self,
         hours: Optional[int] = 24 * 28,
         region: Optional[str] = None,
         timeseries: Optional[pd.DataFrame] = None,
     ) -> Dict[str, Any]:
         """
-        Bikes absent from the feed, by hour of day and by weekday.
+        Estimated bikes in use, by hour of day and by weekday.
 
         GBFS lists only parked, rentable bikes, so anything being ridden,
         serviced, or carried on a rebalancing van is missing from the count.
@@ -636,7 +571,7 @@ class LastMileMetrics:
         size drifts by hundreds of bikes over months, and a single figure makes
         later days read as busy and earlier ones as negative.
 
-        This measures bikes out *at once*, not trips: a ten-minute ride and a
+        This measures bikes away *at once*, not trips: a ten-minute ride and a
         two-hour one look the same in an hourly snapshot.
         """
         ts = (
@@ -645,7 +580,7 @@ class LastMileMetrics:
             else timeseries
         )
         empty = pd.DataFrame(
-            columns=["hour", "bikes_out", "avg_parked", "samples"]
+            columns=["hour", "bikes_in_use", "avg_parked", "samples"]
         )
         if ts.empty:
             return {
@@ -676,19 +611,19 @@ class LastMileMetrics:
 
         # Days with no overnight snapshot fall back to the typical fleet size.
         fleet = df["date"].map(per_date).fillna(baseline)
-        df["bikes_out"] = fleet - df["total_bikes"]
+        df["bikes_in_use"] = fleet - df["total_bikes"]
 
         by_hour = (
             df.groupby("hour", as_index=False)
             .agg(
-                bikes_out=("bikes_out", "mean"),
+                bikes_in_use=("bikes_in_use", "mean"),
                 avg_parked=("total_bikes", "mean"),
                 samples=("timestamp", "count"),
             )
             .sort_values("hour")
         )
         by_day = df.groupby("day_of_week", as_index=False).agg(
-            bikes_out=("bikes_out", "mean"),
+            bikes_in_use=("bikes_in_use", "mean"),
             avg_parked=("total_bikes", "mean"),
             samples=("timestamp", "count"),
         )
@@ -704,13 +639,7 @@ class LastMileMetrics:
             "by_day": by_day,
         }
 
-    def get_utilization_distribution(
-        self, region: Optional[str] = None
-    ) -> pd.DataFrame:
-        """Latest-snapshot station utilization rates."""
-        return queries.get_utilization_snapshot(self.conn, region=region)
-
-    def get_failure_by_hour(
+    def get_problematic_by_hour(
         self,
         hours: Optional[int] = 24 * 28,
         region: Optional[str] = None,

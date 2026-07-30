@@ -28,9 +28,8 @@ def render(metrics_svc: LastMileMetrics) -> None:
         return
 
     render_live_kpis(live)
-    st.markdown('<div style="height: 0.85rem;"></div>', unsafe_allow_html=True)
 
-    left, right = st.columns(2, gap="large", vertical_alignment="top")
+    left, right = st.columns(2, gap="medium", vertical_alignment="top")
     with left:
         render_problematic_stations(problematic)
     with right:

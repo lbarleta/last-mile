@@ -1,13 +1,10 @@
-"""Altair chart helpers for historical views."""
+"""Altair chart helpers for Live Ops and Trends views."""
 
 from __future__ import annotations
 
 import altair as alt
 import pandas as pd
 import streamlit as st
-
-from LastMile.config import OPS_DAY_HOUR_END, OPS_DAY_HOUR_START
-
 
 BIKE_SERIES = ["Docked classic", "Docked e-bikes", "Free-floating"]
 SERIES_COLORS = {
@@ -17,7 +14,7 @@ SERIES_COLORS = {
     "Available docks": "#7a828a",
 }
 DOCK_DASH = [5, 3]
-BIKES_OUT_COLOR = "#285ab4"
+UTILIZATION_COLOR = "#285ab4"
 
 # Empty and Full are the states an operator has to act on, so they carry the
 # saturated colours and sit at the outer edges of the stack.
@@ -200,14 +197,14 @@ def render_availability_over_time(ts: pd.DataFrame) -> None:
     chart = (
         (bike_area + dock_line)
         .resolve_scale(color="independent")
-        .properties(height=340, padding={"left": 4, "right": 12, "top": 4, "bottom": 8})
+        .properties(height=300, padding={"left": 4, "right": 12, "top": 4, "bottom": 8})
         .configure_view(strokeWidth=0)
     )
     st.altair_chart(chart, width="stretch")
 
 
-def render_bikes_out_by_hour(by_hour: pd.DataFrame) -> None:
-    """Estimated bikes away from the feed across the clock."""
+def render_utilization_by_hour(by_hour: pd.DataFrame) -> None:
+    """Estimated bikes in use across the clock."""
     if by_hour.empty:
         st.info("Not enough data for hourly patterns.")
         return
@@ -218,7 +215,7 @@ def render_bikes_out_by_hour(by_hour: pd.DataFrame) -> None:
     ]
     tooltip = [
         alt.Tooltip("hour_label:N", title="Hour"),
-        alt.Tooltip("bikes_out:Q", title="Bikes out", format=",.0f"),
+        alt.Tooltip("bikes_in_use:Q", title="Bikes in use", format=",.0f"),
         alt.Tooltip("avg_parked:Q", title="Avg parked", format=",.0f"),
         alt.Tooltip("samples:Q", title="Snapshots"),
     ]
@@ -229,30 +226,30 @@ def render_bikes_out_by_hour(by_hour: pd.DataFrame) -> None:
             scale=alt.Scale(domain=[0, 23], nice=False),
             axis=alt.Axis(values=[0, 3, 6, 9, 12, 15, 18, 21], labelExpr=_HOUR_LABEL),
         ),
-        y=alt.Y("bikes_out:Q", title=None, scale=alt.Scale(nice=True)),
+        y=alt.Y("bikes_in_use:Q", title=None, scale=alt.Scale(nice=True)),
         tooltip=tooltip,
     )
     chart = (
         (
-            base.mark_area(opacity=0.18, color=BIKES_OUT_COLOR)
-            + base.mark_line(strokeWidth=2, color=BIKES_OUT_COLOR)
-            + base.mark_point(size=32, filled=True, color=BIKES_OUT_COLOR)
+            base.mark_area(opacity=0.18, color=UTILIZATION_COLOR)
+            + base.mark_line(strokeWidth=2, color=UTILIZATION_COLOR)
+            + base.mark_point(size=32, filled=True, color=UTILIZATION_COLOR)
         )
-        .properties(height=280)
+        .properties(height=260)
         .configure_view(strokeWidth=0)
     )
     st.altair_chart(chart, width="stretch")
 
 
-def render_bikes_out_by_day(by_day: pd.DataFrame) -> None:
-    """Estimated bikes away from the feed, averaged per weekday."""
+def render_utilization_by_day(by_day: pd.DataFrame) -> None:
+    """Estimated bikes in use, averaged per weekday."""
     if by_day.empty:
         st.info("Not enough data for day-of-week patterns.")
         return
 
     chart = (
         alt.Chart(by_day)
-        .mark_bar(color=BIKES_OUT_COLOR, opacity=0.85)
+        .mark_bar(color=UTILIZATION_COLOR, opacity=0.85)
         .encode(
             x=alt.X(
                 "day_of_week:N",
@@ -260,15 +257,15 @@ def render_bikes_out_by_day(by_day: pd.DataFrame) -> None:
                 sort=list(by_day["day_of_week"]),
                 axis=alt.Axis(labelAngle=0, labelExpr="slice(datum.value, 0, 3)"),
             ),
-            y=alt.Y("bikes_out:Q", title=None, scale=alt.Scale(nice=True)),
+            y=alt.Y("bikes_in_use:Q", title=None, scale=alt.Scale(nice=True)),
             tooltip=[
                 alt.Tooltip("day_of_week:N", title="Day"),
-                alt.Tooltip("bikes_out:Q", title="Bikes out", format=",.0f"),
+                alt.Tooltip("bikes_in_use:Q", title="Bikes in use", format=",.0f"),
                 alt.Tooltip("avg_parked:Q", title="Avg parked", format=",.0f"),
                 alt.Tooltip("samples:Q", title="Snapshots"),
             ],
         )
-        .properties(height=280)
+        .properties(height=260)
         .configure_view(strokeWidth=0)
     )
     st.altair_chart(chart, width="stretch")
@@ -341,26 +338,19 @@ def render_station_status_mix(ts: pd.DataFrame) -> None:
                 alt.Tooltip("stations:Q", title="Stations"),
             ],
         )
-        .properties(height=340)
+        .properties(height=300)
         .configure_view(strokeWidth=0)
     )
     st.altair_chart(chart, width="stretch")
 
 
-def render_failure_by_hour(by_hour: pd.DataFrame) -> None:
-    """Empty and full rates across daytime ops hours, kept as separate lines."""
+def render_problematic_by_hour(by_hour: pd.DataFrame) -> None:
+    """Empty and full rates across the clock, kept as separate lines."""
     if by_hour.empty:
         st.info("Not enough station history in this range.")
         return
 
-    day = by_hour[
-        by_hour["hour"].between(OPS_DAY_HOUR_START, OPS_DAY_HOUR_END)
-    ].copy()
-    if day.empty:
-        st.info("Not enough daytime station history in this range.")
-        return
-
-    df = day.melt(
+    df = by_hour.melt(
         id_vars=["hour", "samples"],
         value_vars=["pct_empty", "pct_full"],
         var_name="metric",
@@ -380,15 +370,12 @@ def render_failure_by_hour(by_hour: pd.DataFrame) -> None:
             orient="bottom", direction="horizontal", symbolType="stroke"
         ),
     )
-    # Even 2-hour ticks so the gridlines stay evenly spaced across the day.
-    ticks = list(range(OPS_DAY_HOUR_START, OPS_DAY_HOUR_END + 1, 2))
+    ticks = [0, 3, 6, 9, 12, 15, 18, 21]
     base = alt.Chart(df).encode(
         x=alt.X(
             "hour:Q",
             title=None,
-            scale=alt.Scale(
-                domain=[OPS_DAY_HOUR_START, OPS_DAY_HOUR_END], nice=False
-            ),
+            scale=alt.Scale(domain=[0, 23], nice=False),
             axis=alt.Axis(values=ticks, labelExpr=_HOUR_LABEL, grid=True),
         ),
         y=alt.Y("pct:Q", title=None, axis=alt.Axis(format=".0f")),
@@ -402,13 +389,13 @@ def render_failure_by_hour(by_hour: pd.DataFrame) -> None:
     )
     chart = (
         (base.mark_line(strokeWidth=2) + base.mark_point(size=28, filled=True))
-        .properties(height=340)
+        .properties(height=300)
         .configure_view(strokeWidth=0)
     )
     st.altair_chart(chart, width="stretch")
 
 
-def render_station_reliability(rel: pd.DataFrame, size: int = 340) -> None:
+def render_station_reliability(rel: pd.DataFrame, size: int = 300) -> None:
     """
     One point per station: how often it sits empty versus full.
 
@@ -424,7 +411,7 @@ def render_station_reliability(rel: pd.DataFrame, size: int = 340) -> None:
     df["mode"] = "Mixed"
     df.loc[df["pct_empty"] >= df["pct_full"] * 3, "mode"] = "Runs empty"
     df.loc[df["pct_full"] >= df["pct_empty"] * 3, "mode"] = "Runs full"
-    df.loc[df["pct_unusable"] < 1, "mode"] = "Reliable"
+    df.loc[df["pct_failure"] < 1, "mode"] = "Reliable"
 
     limit = max(float(df["pct_empty"].max()), float(df["pct_full"].max()), 5.0)
     limit = min(100.0, limit * 1.08)
@@ -476,7 +463,7 @@ def render_station_reliability(rel: pd.DataFrame, size: int = 340) -> None:
             ],
         )
     )
-    # Anything beyond this line spends more than a quarter of its life unusable.
+    # Anything beyond this line spends more than a quarter of its life in failure.
     threshold = (
         alt.Chart(pd.DataFrame({"x": [0.0, 25.0], "y": [25.0, 0.0]}))
         .mark_line(strokeDash=[4, 4], strokeWidth=1, color="#b42828", opacity=0.6)
@@ -498,41 +485,25 @@ def render_region_status_pct(by_region: pd.DataFrame) -> None:
         st.info("No regional station data in this snapshot.")
         return
 
-    st.markdown(
-        """
-        <style>
-          div[data-testid="stElementContainer"]:has(.lm-region-head) {
-            margin-bottom: 1.15rem !important;
-          }
-          .lm-region-head { margin: 0; }
-          .lm-region-title {
-            font-size: 1.05rem;
-            font-weight: 600;
-            color: #1c1f24;
-            line-height: 1.3;
-            margin: 0;
-          }
-          .lm-region-caption {
-            font-size: 0.85rem;
-            color: #7a828a;
-            margin: 0.15rem 0 0 0;
-            line-height: 1.3;
-          }
-        </style>
-        <div class="lm-region-head">
-          <div class="lm-region-title">Station status by region</div>
-          <div class="lm-region-caption">Share of stations in each status for the selected snapshot</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.subheader("Station status by region")
+    st.caption("Share of stations in each status for the selected snapshot")
 
     statuses = ["Empty", "Low", "Healthy", "Full"]
     value_vars = ["pct_empty", "pct_low", "pct_healthy", "pct_full"]
     count_cols = ["empty", "low", "healthy", "full"]
+    tip_cols = [f"tip_{c}" for c in count_cols]
 
-    df = by_region.melt(
-        id_vars=["region", "total", *count_cols],
+    region = by_region.copy()
+    for status, pct_col, count_col, tip_col in zip(
+        statuses, value_vars, count_cols, tip_cols
+    ):
+        region[tip_col] = [
+            f"{pct:.1f}% ({int(n):,})"
+            for pct, n in zip(region[pct_col], region[count_col])
+        ]
+
+    df = region.melt(
+        id_vars=["region", "total", *count_cols, *tip_cols],
         value_vars=value_vars,
         var_name="metric",
         value_name="pct",
@@ -545,7 +516,7 @@ def render_region_status_pct(by_region: pd.DataFrame) -> None:
             "pct_full": "Full",
         }
     )
-    region_order = by_region["region"].tolist()
+    region_order = region["region"].tolist()
     x_max = float(df["pct"].max()) if not df.empty else 0.0
     x_max = min(100.0, max(20.0, (x_max * 1.12 + 2)))
 
@@ -592,18 +563,15 @@ def render_region_status_pct(by_region: pd.DataFrame) -> None:
             yOffset=alt.YOffset("status:N", sort=statuses),
             tooltip=[
                 alt.Tooltip("region:N", title="Region"),
-                alt.Tooltip("status:N", title="Status"),
-                alt.Tooltip("pct:Q", title="% of region", format=".1f"),
-                alt.Tooltip("empty:Q", title="Empty"),
-                alt.Tooltip("low:Q", title="Low"),
-                alt.Tooltip("healthy:Q", title="Healthy"),
-                alt.Tooltip("full:Q", title="Full"),
-                alt.Tooltip("total:Q", title="Stations in region"),
+                alt.Tooltip("tip_empty:N", title="Empty"),
+                alt.Tooltip("tip_low:N", title="Low"),
+                alt.Tooltip("tip_healthy:N", title="Healthy"),
+                alt.Tooltip("tip_full:N", title="Full"),
             ],
         )
         .properties(
-            height=max(420, len(region_order) * 78),
-            padding={"left": 4, "right": 12, "top": 4, "bottom": 28},
+            height=max(360, len(region_order) * 68),
+            padding={"left": 4, "right": 12, "top": 4, "bottom": 20},
         )
         .configure_view(strokeWidth=0)
         .configure_axis(labelPadding=2, titlePadding=2)

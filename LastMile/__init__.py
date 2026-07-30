@@ -7,7 +7,7 @@ Modules:
 - setup: one-time station table setup
 - manager: hourly snapshot collection
 - db: read-only query helpers and indexes
-- metrics: live-ops and historical metrics
+- metrics: live-ops and trends metrics
 - coverage: San Francisco walk-shed coverage
 - weather: Open-Meteo hourly weather cache
 - features: feature engineering for stockout forecasting

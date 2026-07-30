@@ -9,7 +9,7 @@ LastMile/
   setup.py      one-time stations table / schema (LastMileSetup)
   manager.py    hourly station + free-bike collection (LastMileManager)
   db.py         read-only SQL helpers and indexes
-  metrics.py    live-ops + historical KPIs (LastMileMetrics)
+  metrics.py    live-ops + trends KPIs (LastMileMetrics)
   coverage.py   San Francisco 3-min walk-shed geometry
   weather.py    Open-Meteo hourly weather cache (archive + forecast)
   features.py   station panel + feature engineering for forecasting

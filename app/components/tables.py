@@ -8,36 +8,10 @@ import streamlit as st
 
 def render_problematic_stations(df: pd.DataFrame) -> None:
     """Stations empty or full in the recent daytime lookback window."""
-    st.markdown(
-        """
-        <style>
-          div[data-testid="stElementContainer"]:has(.lm-panel-head) {
-            margin-bottom: 1.15rem !important;
-          }
-          .lm-panel-head { margin: 0; }
-          .lm-panel-title {
-            font-size: 1.05rem;
-            font-weight: 600;
-            color: #1c1f24;
-            line-height: 1.3;
-            margin: 0;
-          }
-          .lm-panel-caption {
-            font-size: 0.85rem;
-            color: #7a828a;
-            margin: 0.15rem 0 0 0;
-            line-height: 1.3;
-          }
-        </style>
-        <div class="lm-panel-head">
-          <div class="lm-panel-title">Problematic stations</div>
-          <div class="lm-panel-caption">
-            Empty or full in the last 3 hours · night hours (9pm–7am) excluded ·
-            backup = nearest non-problematic station within 900 m
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.subheader("Problematic stations")
+    st.caption(
+        "Empty or full in the last 3 hours · night hours (9pm–7am) excluded · "
+        "backup = nearest non-problematic station within 900 m"
     )
     if df.empty:
         st.info("No problematic stations in this daytime window.")
