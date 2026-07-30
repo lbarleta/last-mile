@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional, Dict, Any
-from .lastmile_utils import LastMileUtils
+from .utils import LastMileUtils
 
 
 class LastMileManager:

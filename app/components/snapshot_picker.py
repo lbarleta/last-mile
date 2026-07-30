@@ -7,8 +7,8 @@ from typing import Optional
 
 import streamlit as st
 
+from LastMile import LastMileMetrics
 from LastMile.config import TIMESTAMP_FORMAT
-from LastMile.lastmile_metrics import LastMileMetrics
 
 DATE_KEY = "snapshot_picker_date"
 HOUR_KEY_PREFIX = "snapshot_picker_hour_"

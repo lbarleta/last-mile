@@ -25,7 +25,7 @@ from LastMile import (
     LastMileManager,
     LastMileSetup,
 )
-from LastMile.lastmile_queries import connect, ensure_indexes
+from LastMile.db import connect, ensure_indexes
 
 
 def parse_args() -> argparse.Namespace:

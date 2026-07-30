@@ -7,7 +7,7 @@ import streamlit as st
 from components.charts import render_region_status_pct
 from components.kpis import render_live_kpis
 from components.snapshot_picker import render_snapshot_picker
-from LastMile.lastmile_metrics import LastMileMetrics
+from LastMile import LastMileMetrics
 
 
 def render(metrics_svc: LastMileMetrics) -> None:

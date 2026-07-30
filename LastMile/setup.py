@@ -3,7 +3,7 @@ import requests
 import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, Any
-from .lastmile_utils import LastMileUtils
+from .utils import LastMileUtils
 
 
 class LastMileSetup:
@@ -116,7 +116,7 @@ class LastMileSetup:
 
     def ensure_indexes(self):
         """Create indexes used by dashboard historical queries."""
-        from . import lastmile_queries as queries
+        from . import db as queries
 
         queries.ensure_indexes(self.utils.conn)
         print("Database indexes verified")

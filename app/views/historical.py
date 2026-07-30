@@ -12,7 +12,7 @@ from components.charts import (
     render_hourly_pattern,
     render_utilization_hist,
 )
-from LastMile.lastmile_metrics import LastMileMetrics
+from LastMile import LastMileMetrics
 
 
 def render(metrics_svc: LastMileMetrics) -> None:

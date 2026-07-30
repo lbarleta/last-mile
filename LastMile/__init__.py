@@ -1,17 +1,23 @@
 """
 LastMile - A Python library for managing GBFS transportation data.
 
-Classes:
-- LastMileSetup: initial setup and configuration
-- LastMileManager: ongoing hourly data collection
-- LastMileUtils: GBFS feed helpers and database connection
-- LastMileMetrics: live-ops and historical metrics from SQLite
+Modules:
+- config: defaults and constants
+- utils: GBFS feed helpers and SQLite connection
+- setup: one-time station table setup
+- manager: hourly snapshot collection
+- db: read-only query helpers and indexes
+- metrics: live-ops and historical metrics
+- coverage: San Francisco walk-shed coverage
+
+Public classes:
+- LastMileSetup, LastMileManager, LastMileUtils, LastMileMetrics
 """
 
-from .lastmile_setup import LastMileSetup
-from .lastmile_manager import LastMileManager
-from .lastmile_utils import LastMileUtils
-from .lastmile_metrics import LastMileMetrics
+from .setup import LastMileSetup
+from .manager import LastMileManager
+from .utils import LastMileUtils
+from .metrics import LastMileMetrics
 from .config import DEFAULT_DB_PATH, DEFAULT_FEEDS_URL, DEFAULT_LANG, DEFAULT_TIMEZONE
 
 __version__ = "1.0.0alpha"

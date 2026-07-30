@@ -6,7 +6,7 @@ import streamlit as st
 
 from components.maps import render_ops_map
 from components.snapshot_picker import render_snapshot_picker
-from LastMile.lastmile_metrics import LastMileMetrics
+from LastMile import LastMileMetrics
 
 
 def render(metrics_svc: LastMileMetrics) -> None:

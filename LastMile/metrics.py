@@ -13,8 +13,8 @@ from .config import (
     LOW_RANGE_METERS,
     TIMESTAMP_FORMAT,
 )
+from . import db as queries
 from . import coverage as coverage_mod
-from . import lastmile_queries as queries
 
 
 class LastMileMetrics:
