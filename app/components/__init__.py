@@ -44,6 +44,22 @@ def apply_layout_styles() -> None:
     st.markdown(
         """
         <style>
+            /* Force light theme even if config.toml is not discovered
+               (e.g. PythonAnywhere cwd is not the project root). */
+            :root, html, body, [data-testid="stAppViewContainer"], .stApp {
+                color-scheme: light !important;
+                background-color: #f5f6f8 !important;
+                color: #1c1f24 !important;
+            }
+            [data-testid="stHeader"] {
+                background-color: #f5f6f8 !important;
+            }
+            [data-testid="stMain"],
+            section.main,
+            .main .block-container {
+                background-color: #f5f6f8 !important;
+            }
+
             /* Hide sidebar */
             [data-testid="stSidebar"],
             [data-testid="stSidebarCollapsedControl"],
@@ -53,7 +69,7 @@ def apply_layout_styles() -> None:
 
             /* Collapse Streamlit top chrome that creates empty space */
             header[data-testid="stHeader"] {
-                background: transparent !important;
+                background: #f5f6f8 !important;
                 height: 0 !important;
                 min-height: 0 !important;
             }

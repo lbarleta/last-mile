@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect an hourly Bay Wheels GBFS snapshot into the local SQLite warehouse.
+"""Collect an hourly Bay Wheels GBFS snapshot into the local SQLite database.
 
 Usage:
     python scripts/collect.py
