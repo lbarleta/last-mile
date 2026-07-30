@@ -1,23 +1,25 @@
 # LastMile
 
-Python library for ingesting GBFS bike-share feeds into SQLite and computing ops metrics.
+Python package for ingesting GBFS bike-share feeds into SQLite and computing
+operations and trend metrics. The Streamlit dashboard in [`app/`](../app/) is a
+thin read-only client over this library.
+
+## Layout
 
 ```text
 LastMile/
-  config.py     defaults (DB path, timestamps, coverage radius, …)
-  utils.py      GBFS feed client + shared SQLite connection (LastMileUtils)
-  setup.py      one-time stations table / schema (LastMileSetup)
-  manager.py    hourly station + free-bike collection (LastMileManager)
-  db.py         read-only SQL helpers and indexes
-  metrics.py    live-ops + trends KPIs (LastMileMetrics)
-  coverage.py   San Francisco 3-min walk-shed geometry
-  weather.py    Open-Meteo hourly weather cache (archive + forecast)
-  features.py   station panel + feature engineering for forecasting
-  forecast.py   stockout model: train, backtest, score, store (under development)
+  config.py     Defaults (DB path, timezone, ops windows, coverage)
+  utils.py      GBFS feed client and shared SQLite connection
+  setup.py      One-time stations table / schema (LastMileSetup)
+  manager.py    Hourly station + free-bike collection (LastMileManager)
+  db.py         Read-only SQL helpers and indexes
+  metrics.py    Live Ops and Trends metrics (LastMileMetrics)
+  coverage.py   San Francisco walk-shed geometry
 ```
 
+Hourly collection entry point: [`scripts/collect.py`](../scripts/collect.py).
 
-Public imports:
+## Public API
 
 ```python
 from LastMile import (
@@ -26,8 +28,67 @@ from LastMile import (
     LastMileMetrics,
     LastMileUtils,
     DEFAULT_DB_PATH,
+    DEFAULT_FEEDS_URL,
+    DEFAULT_LANG,
+    DEFAULT_TIMEZONE,
 )
 ```
 
-The Streamlit dashboard lives in [`app/`](../app/) (`streamlit run app/main.py`).  
-Hourly collection: [`scripts/collect.py`](../scripts/collect.py).
+| Class | Role |
+| --- | --- |
+| `LastMileSetup` | Create / refresh the `stations` table and schema |
+| `LastMileManager` | Append an hourly `station_status` + `bike_status` snapshot |
+| `LastMileMetrics` | KPIs, tables, and time series for the dashboard |
+| `LastMileUtils` | Low-level GBFS fetch helpers and DB connection |
+
+### Setup and collection
+
+```python
+from LastMile import LastMileSetup, LastMileManager, DEFAULT_DB_PATH, DEFAULT_FEEDS_URL
+
+with LastMileSetup(feeds_url=DEFAULT_FEEDS_URL, lang="en", db_path=DEFAULT_DB_PATH) as setup:
+    setup.create_tables()
+
+with LastMileManager(feeds_url=DEFAULT_FEEDS_URL, lang="en", db_path=DEFAULT_DB_PATH) as manager:
+    manager.update_data()
+```
+
+### Metrics
+
+```python
+from LastMile import LastMileMetrics, DEFAULT_DB_PATH
+
+with LastMileMetrics(db_path=DEFAULT_DB_PATH) as metrics:
+    live = metrics.get_live_ops_metrics()          # latest (or chosen) snapshot
+    series = metrics.get_availability_timeseries(hours=24 * 7)
+    util = metrics.get_bike_utilization(hours=24 * 28)
+```
+
+Common accessors on `LastMileMetrics`:
+
+| Method | Returns |
+| --- | --- |
+| `get_live_ops_metrics` | Snapshot KPIs, deltas, coverage, station frame |
+| `get_problematic_stations` | Stations empty/full in the trailing daytime lookback |
+| `get_station_status_by_region` | Empty / low / healthy / full mix by region |
+| `get_availability_timeseries` | Hourly fleet split (classic, e-bike, free-floating, docks) |
+| `get_bike_utilization` | Estimated bikes in use by hour and weekday |
+| `get_problematic_by_hour` | Share of stations flagged under the Live Ops rule |
+| `get_station_reliability` | Per-station % of hours empty vs full |
+
+## Conventions
+
+- **Timestamps** are local (`America/Los_Angeles`) hourly keys: `YYYY-MM-DD-HH:00`
+- **Regions** come from the stations table; free-floating bikes are attributed to San Francisco
+- **Problematic** means empty or full in any of the last three daytime hours (7am–8pm)
+- The library opens SQLite read-oriented for metrics; collectors write separately
+
+## Dashboard
+
+```bash
+streamlit run app/main.py
+```
+
+See the [project README](../README.md) for setup, collection, and product
+overview, and [`NOTES.md`](../NOTES.md) for metric definitions and design
+choices.

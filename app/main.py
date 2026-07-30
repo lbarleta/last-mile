@@ -43,11 +43,13 @@ st.markdown(
   <div class="lm-title">Last Mile</div>
   <div class="lm-subtitle">Bay Wheels · San Francisco Bay Area</div>
   <div class="lm-blurb">
-    Monitoring a regional bike-share system from hourly
-    <a href="https://github.com/NABSA/gbfs">GBFS</a> snapshots.
-    Bay Wheels is Lyft-operated; this warehouse currently runs from
-    October 25, 2025 to {latest_date}. By
-    <a href="https://github.com/lbarleta/last-mile">Leo Barleta</a>.
+    An ops dashboard for Bay Wheels (Lyft) that collects hourly
+    <a href="https://github.com/NABSA/gbfs">GBFS</a> snapshots of station and
+    free-bike status into a local database.<br/>
+    Collection currently spans from October 25, 2025 to {latest_date}.
+    Metric definitions and design choices are in
+    <a href="https://github.com/lbarleta/last-mile/blob/main/NOTES.md">NOTES.md</a>.
+    By <a href="https://github.com/lbarleta/last-mile">Leo Barleta</a>.
   </div>
 </div>
 """,

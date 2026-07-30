@@ -1,8 +1,4 @@
-"""
-Quick Start Guide for LastMile Library
-
-Demonstrates setup, collection, and metrics against the local warehouse.
-"""
+"""Smoke-test setup, collection, and metrics against the local warehouse."""
 
 from LastMile import (
     DEFAULT_DB_PATH,
@@ -46,7 +42,7 @@ def quick_data_update(url, lang, db_path, timezone):
 
 def quick_metrics(db_path):
     with LastMileMetrics(db_path=db_path) as metrics:
-        print(metrics.get_system_metrics())
+        print(metrics.get_live_ops_metrics()["timestamp"])
 
 
 def main():
