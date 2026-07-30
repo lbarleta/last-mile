@@ -15,6 +15,22 @@ SERIES_COLORS = {
     "Available docks": "#7a828a",
 }
 DOCK_DASH = [5, 3]
+BIKES_OUT_COLOR = "#285ab4"
+
+# Hour number (0-23) as a clock label: 0 -> "12 am", 15 -> "3 pm".
+_HOUR_LABEL = (
+    "(datum.value % 12 == 0 ? 12 : datum.value % 12) + "
+    "(datum.value < 12 ? ' am' : ' pm')"
+)
+
+
+def hour_text(datetimes: pd.Series) -> pd.Series:
+    """Tooltip label like "Jul 28, 3 pm", with the meridiem lowercased."""
+    return (
+        datetimes.dt.strftime("%b %-d, %-I %p")
+        .str.replace("AM", "am", regex=False)
+        .str.replace("PM", "pm", regex=False)
+    )
 
 # Hour steps the time axis may tick at, coarsest label density last.
 _TICK_STEPS_H = (1, 2, 3, 6, 12, 24, 48, 72, 168, 336, 720)
@@ -48,7 +64,7 @@ def time_axis(datetimes: pd.Series, label_padding: int = 6) -> alt.Axis:
 
     first_key = first.strftime("%Y-%m-%d %H")
     label_expr = (
-        "[timeFormat(datum.value, '%-I %p'), "
+        "[lower(timeFormat(datum.value, '%-I %p')), "
         "(hours(datum.value) == 0 || "
         f"timeFormat(datum.value, '%Y-%m-%d %H') == '{first_key}') "
         "? timeFormat(datum.value, '%b %-d') : '']"
@@ -75,10 +91,12 @@ def render_availability_over_time(ts: pd.DataFrame) -> None:
 
     wide = ts.copy()
     wide["datetime"] = pd.to_datetime(wide["timestamp"], format="%Y-%m-%d-%H:00")
+    wide["hour_label"] = hour_text(wide["datetime"])
     if "total_bikes" not in wide.columns:
         wide["total_bikes"] = sum(wide[c] for c in available)
     tip_cols = [
         "datetime",
+        "hour_label",
         "total_bikes",
         "docks_available",
         "classic_available",
@@ -103,7 +121,7 @@ def render_availability_over_time(ts: pd.DataFrame) -> None:
     x = alt.X("datetime:T", title=None, axis=time_axis(bikes["datetime"]))
     y = alt.Y("count:Q", title=None, stack="zero", scale=alt.Scale(nice=True))
     tooltip = [
-        alt.Tooltip("datetime:T", title="Hour", format="%b %-d, %-I %p"),
+        alt.Tooltip("hour_label:N", title="Hour"),
         alt.Tooltip("total_bikes:Q", title="Total bikes", format=","),
         alt.Tooltip("docks_available:Q", title="Total docks", format=","),
         alt.Tooltip("classic_available:Q", title="Docked classic", format=","),
@@ -169,48 +187,70 @@ def render_availability_over_time(ts: pd.DataFrame) -> None:
     st.altair_chart(chart, width="stretch")
 
 
-def render_hourly_pattern(hourly: pd.DataFrame) -> None:
-    if hourly.empty:
+def render_bikes_out_by_hour(by_hour: pd.DataFrame) -> None:
+    """Estimated bikes away from the feed across the clock."""
+    if by_hour.empty:
         st.info("Not enough data for hourly patterns.")
         return
 
+    data = by_hour.copy()
+    data["hour_label"] = [
+        f"{h % 12 or 12} {'am' if h < 12 else 'pm'}" for h in data["hour"]
+    ]
+    tooltip = [
+        alt.Tooltip("hour_label:N", title="Hour"),
+        alt.Tooltip("bikes_out:Q", title="Bikes out", format=",.0f"),
+        alt.Tooltip("avg_parked:Q", title="Avg parked", format=",.0f"),
+        alt.Tooltip("samples:Q", title="Snapshots"),
+    ]
+    base = alt.Chart(data).encode(
+        x=alt.X(
+            "hour:Q",
+            title=None,
+            scale=alt.Scale(domain=[0, 23], nice=False),
+            axis=alt.Axis(values=[0, 3, 6, 9, 12, 15, 18, 21], labelExpr=_HOUR_LABEL),
+        ),
+        y=alt.Y("bikes_out:Q", title=None, scale=alt.Scale(nice=True)),
+        tooltip=tooltip,
+    )
     chart = (
-        alt.Chart(hourly)
-        .mark_bar()
-        .encode(
-            x=alt.X("hour:O", title="Hour of day"),
-            y=alt.Y("avg_bikes:Q", title="Avg bikes available"),
-            tooltip=[
-                alt.Tooltip("hour:O", title="Hour"),
-                alt.Tooltip("avg_bikes:Q", title="Avg bikes", format=".0f"),
-                alt.Tooltip("avg_empty:Q", title="Avg empty stations", format=".1f"),
-                alt.Tooltip("samples:Q", title="Samples"),
-            ],
+        (
+            base.mark_area(opacity=0.18, color=BIKES_OUT_COLOR)
+            + base.mark_line(strokeWidth=2, color=BIKES_OUT_COLOR)
+            + base.mark_point(size=32, filled=True, color=BIKES_OUT_COLOR)
         )
         .properties(height=280)
+        .configure_view(strokeWidth=0)
     )
     st.altair_chart(chart, width="stretch")
 
 
-def render_daily_pattern(daily: pd.DataFrame) -> None:
-    if daily.empty:
+def render_bikes_out_by_day(by_day: pd.DataFrame) -> None:
+    """Estimated bikes away from the feed, averaged per weekday."""
+    if by_day.empty:
         st.info("Not enough data for day-of-week patterns.")
         return
 
     chart = (
-        alt.Chart(daily)
-        .mark_bar()
+        alt.Chart(by_day)
+        .mark_bar(color=BIKES_OUT_COLOR, opacity=0.85)
         .encode(
-            x=alt.X("day_of_week:N", title="Day", sort=list(daily["day_of_week"])),
-            y=alt.Y("avg_bikes:Q", title="Avg bikes available"),
-            tooltip=[
+            x=alt.X(
                 "day_of_week:N",
-                alt.Tooltip("avg_bikes:Q", title="Avg bikes", format=".0f"),
-                alt.Tooltip("avg_empty:Q", title="Avg empty stations", format=".1f"),
-                alt.Tooltip("samples:Q", title="Samples"),
+                title=None,
+                sort=list(by_day["day_of_week"]),
+                axis=alt.Axis(labelAngle=0, labelExpr="slice(datum.value, 0, 3)"),
+            ),
+            y=alt.Y("bikes_out:Q", title=None, scale=alt.Scale(nice=True)),
+            tooltip=[
+                alt.Tooltip("day_of_week:N", title="Day"),
+                alt.Tooltip("bikes_out:Q", title="Bikes out", format=",.0f"),
+                alt.Tooltip("avg_parked:Q", title="Avg parked", format=",.0f"),
+                alt.Tooltip("samples:Q", title="Snapshots"),
             ],
         )
         .properties(height=280)
+        .configure_view(strokeWidth=0)
     )
     st.altair_chart(chart, width="stretch")
 

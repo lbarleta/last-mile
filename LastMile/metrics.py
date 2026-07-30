@@ -10,6 +10,7 @@ import pandas as pd
 from .config import (
     DEFAULT_DB_PATH,
     DEFAULT_TIMEZONE,
+    FLEET_BASELINE_HOURS,
     FORECAST_RISK_THRESHOLD,
     LOW_RANGE_METERS,
     SUPPLY_BASELINE_DAYS,
@@ -18,6 +19,16 @@ from .config import (
 from . import db as queries
 from . import coverage as coverage_mod
 from . import forecast as forecast_mod
+
+DAY_ORDER = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
 
 
 class LastMileMetrics:
@@ -585,15 +596,6 @@ class LastMileMetrics:
         df = ts.copy()
         df["datetime"] = pd.to_datetime(df["timestamp"], format=TIMESTAMP_FORMAT)
         df["day_of_week"] = df["datetime"].dt.day_name()
-        day_order = [
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-            "Sunday",
-        ]
         grouped = (
             df.groupby("day_of_week", as_index=False)
             .agg(
@@ -605,9 +607,96 @@ class LastMileMetrics:
             )
         )
         grouped["day_of_week"] = pd.Categorical(
-            grouped["day_of_week"], categories=day_order, ordered=True
+            grouped["day_of_week"], categories=DAY_ORDER, ordered=True
         )
         return grouped.sort_values("day_of_week")
+
+    def get_bikes_out_patterns(
+        self,
+        hours: Optional[int] = 24 * 28,
+        region: Optional[str] = None,
+        timeseries: Optional[pd.DataFrame] = None,
+    ) -> Dict[str, Any]:
+        """
+        Bikes absent from the feed, by hour of day and by weekday.
+
+        GBFS lists only parked, rentable bikes, so anything being ridden,
+        serviced, or carried on a rebalancing van is missing from the count.
+        Overnight almost the whole fleet is home, so each day's busiest hour
+        between midnight and 4am stands in for its fleet size; subtracting the
+        parked count from it estimates how many bikes are away at that moment.
+
+        The fleet is re-estimated per day rather than once for the range. Fleet
+        size drifts by hundreds of bikes over months, and a single figure makes
+        later days read as busy and earlier ones as negative.
+
+        This measures bikes out *at once*, not trips: a ten-minute ride and a
+        two-hour one look the same in an hourly snapshot.
+        """
+        ts = (
+            self.get_availability_timeseries(hours=hours, region=region)
+            if timeseries is None
+            else timeseries
+        )
+        empty = pd.DataFrame(
+            columns=["hour", "bikes_out", "avg_parked", "samples"]
+        )
+        if ts.empty:
+            return {
+                "baseline": None,
+                "baseline_hour": None,
+                "by_hour": empty,
+                "by_day": empty,
+            }
+
+        df = ts.copy()
+        df["datetime"] = pd.to_datetime(df["timestamp"], format=TIMESTAMP_FORMAT)
+        df["hour"] = df["datetime"].dt.hour
+        df["date"] = df["datetime"].dt.normalize()
+        df["day_of_week"] = df["datetime"].dt.day_name()
+
+        night = df[df["hour"].isin(FLEET_BASELINE_HOURS)]
+        if night.empty:
+            # Range misses the overnight window; the calmest hour on record is
+            # the closest available stand-in.
+            per_date = pd.Series(dtype=float)
+            baseline = float(df["total_bikes"].max())
+            baseline_hour = None
+        else:
+            peak = night.loc[night.groupby("date")["total_bikes"].idxmax()]
+            per_date = peak.set_index("date")["total_bikes"]
+            baseline = float(per_date.median())
+            baseline_hour = int(peak["hour"].mode().iloc[0])
+
+        # Days with no overnight snapshot fall back to the typical fleet size.
+        fleet = df["date"].map(per_date).fillna(baseline)
+        df["bikes_out"] = fleet - df["total_bikes"]
+
+        by_hour = (
+            df.groupby("hour", as_index=False)
+            .agg(
+                bikes_out=("bikes_out", "mean"),
+                avg_parked=("total_bikes", "mean"),
+                samples=("timestamp", "count"),
+            )
+            .sort_values("hour")
+        )
+        by_day = df.groupby("day_of_week", as_index=False).agg(
+            bikes_out=("bikes_out", "mean"),
+            avg_parked=("total_bikes", "mean"),
+            samples=("timestamp", "count"),
+        )
+        by_day["day_of_week"] = pd.Categorical(
+            by_day["day_of_week"], categories=DAY_ORDER, ordered=True
+        )
+        by_day = by_day.sort_values("day_of_week")
+
+        return {
+            "baseline": baseline,
+            "baseline_hour": baseline_hour,
+            "by_hour": by_hour,
+            "by_day": by_day,
+        }
 
     def get_utilization_distribution(
         self, region: Optional[str] = None

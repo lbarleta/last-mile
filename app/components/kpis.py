@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 
+from components import format_hour
+
 
 def _inject_kpi_styles() -> None:
     st.markdown(
@@ -183,11 +185,9 @@ def _fmt_pct_with_count(pct: float, count: int) -> str:
 def _hour_label(timestamp: Optional[str]) -> str:
     """Snapshot hour as a plain clock label, e.g. "4 pm"."""
     try:
-        hour = int(str(timestamp)[11:13])
+        return format_hour(int(str(timestamp)[11:13]))
     except (TypeError, ValueError):
         return "this hour"
-    suffix = "am" if hour < 12 else "pm"
-    return f"{hour % 12 or 12} {suffix}"
 
 
 def _fmt_vs_typical(

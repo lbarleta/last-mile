@@ -10,7 +10,7 @@ Hourly bike-share warehouse and Streamlit dashboard, built on open [GBFS](https:
 1. **Collect** — pull station and free-bike status from Bay Wheels GBFS once per hour into SQLite
 2. **Live Ops** — headline supply balance and walk-shed coverage, KPIs (with prior-hour deltas), regional availability mix chart
 3. **Map** — station map colored by empty / low / healthy / full
-4. **Historical** — availability trends, peak hours, day-of-week patterns, utilization
+4. **Historical** — availability trends, estimated bike utilization by hour and weekday, station utilization
 5. **Forecast** *(under development — hidden from the dashboard)* — per-station probability of running empty or full in the next 6 hours, with a rolling-origin backtest against naive baselines
 
 ```text

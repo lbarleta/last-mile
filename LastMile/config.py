@@ -29,6 +29,11 @@ COVERAGE_RADIUS_M = 300
 # The ratio swings on a daily cycle, so the baseline holds hour of day fixed.
 SUPPLY_BASELINE_DAYS = 28
 
+# Overnight hours used to estimate fleet size. Bikes drop out of the feed while
+# they are away, and at these hours nearly all of them are parked, so the
+# busiest one stands in for the full fleet.
+FLEET_BASELINE_HOURS = (0, 1, 2, 3, 4)
+
 SF_BOUNDARY_GEOJSON_PATH = PROJECT_ROOT / "assets" / "sf_county_boundary.geojson"
 # Source (kept for reference; app reads the local copy only):
 # https://data.sfgov.org/resource/wamw-vt4s.geojson?county=San%20Francisco

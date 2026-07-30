@@ -10,9 +10,10 @@ import streamlit as st
 
 from components import format_snapshot_datetime
 from components.charts import (
+    hour_text,
     render_availability_over_time,
-    render_daily_pattern,
-    render_hourly_pattern,
+    render_bikes_out_by_day,
+    render_bikes_out_by_hour,
     render_utilization_hist,
     time_axis,
 )
@@ -44,6 +45,17 @@ def _load_timeseries(
     return _metrics_svc.get_availability_timeseries(hours=hours, region=region)
 
 
+def _bikes_out_blurb() -> str:
+    return (
+        "This is an estimate, since the GBFS feed doesn't report fleet size or "
+        "which bikes are being ridden, serviced, or moved by van. We assume a "
+        "closed fleet, using the highest count seen overnight (midnight–4am) as "
+        "the baseline. Bikes in use = baseline minus bikes currently available. "
+        "We re-estimate this baseline daily so fleet growth doesn't get mistaken "
+        "for demand."
+    )
+
+
 def render(metrics_svc: LastMileMetrics) -> None:
     left, right = st.columns([2, 2])
     with left:
@@ -62,8 +74,15 @@ def render(metrics_svc: LastMileMetrics) -> None:
         try:
             latest = metrics_svc.get_latest_timestamp()
             timeseries = _load_timeseries(metrics_svc, hours, region, latest)
-            hourly = metrics_svc.get_hourly_patterns(timeseries=timeseries)
-            daily = metrics_svc.get_daily_patterns(timeseries=timeseries)
+            # Deliberately unfiltered: the estimate infers bikes away from a
+            # fleet baseline, which only holds for a pool bikes cannot leave.
+            # A single region trades bikes with its neighbours.
+            systemwide = (
+                timeseries
+                if region is None
+                else _load_timeseries(metrics_svc, hours, None, latest)
+            )
+            bikes_out = metrics_svc.get_bikes_out_patterns(timeseries=systemwide)
             utilization = metrics_svc.get_utilization_distribution(region=region)
         except Exception as exc:
             st.error(f"Failed to load historical metrics: {exc}")
@@ -83,15 +102,18 @@ def render(metrics_svc: LastMileMetrics) -> None:
     st.subheader("Bike and Dock Availability")
     render_availability_over_time(timeseries)
 
+    st.subheader("Bike Utilization (system-wide)")
+    st.caption(_bikes_out_blurb())
+
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Peak hours")
-        st.caption("Average bikes available by hour of day")
-        render_hourly_pattern(hourly)
+        st.markdown("##### Peak hours")
+        st.caption("Average bikes in use by hour of day")
+        render_bikes_out_by_hour(bikes_out["by_hour"])
     with c2:
-        st.subheader("Day of week")
-        st.caption("Average bikes available by weekday")
-        render_daily_pattern(daily)
+        st.markdown("##### Peak days")
+        st.caption("Average bikes in use by day of week")
+        render_bikes_out_by_day(bikes_out["by_day"])
 
     st.subheader("Station utilization (latest snapshot)")
     st.caption("Share of occupied capacity: bikes / (bikes + docks)")
@@ -106,6 +128,7 @@ def render(metrics_svc: LastMileMetrics) -> None:
         empty_full["datetime"] = pd.to_datetime(
             empty_full["timestamp"], format="%Y-%m-%d-%H:00"
         )
+        empty_full["hour_label"] = hour_text(empty_full["datetime"])
         empty_full["metric"] = empty_full["metric"].map(
             {"empty_stations": "Empty", "full_stations": "Full"}
         )
@@ -125,7 +148,7 @@ def render(metrics_svc: LastMileMetrics) -> None:
                     ),
                 ),
                 tooltip=[
-                    alt.Tooltip("datetime:T", title="Hour", format="%b %-d, %-I %p"),
+                    alt.Tooltip("hour_label:N", title="Hour"),
                     alt.Tooltip("metric:N", title="Status"),
                     alt.Tooltip("count:Q", title="Stations"),
                 ],

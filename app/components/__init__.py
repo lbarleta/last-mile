@@ -28,6 +28,12 @@ def format_snapshot_datetime(timestamp: str) -> str:
     return dt.strftime("%B %-d, %Y at %-I %p").replace("AM", "am").replace("PM", "pm")
 
 
+def format_hour(hour: int) -> str:
+    """Clock hour as "3 pm", matching the lowercase meridiem used elsewhere."""
+    suffix = "am" if hour < 12 else "pm"
+    return f"{hour % 12 or 12} {suffix}"
+
+
 def resolve_db_path() -> str:
     """DB path from LASTMILE_DB env or project default (not shown in UI)."""
     return os.environ.get("LASTMILE_DB", DEFAULT_DB_PATH)
