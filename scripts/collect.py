@@ -25,7 +25,6 @@ from LastMile import (
     LastMileManager,
     LastMileSetup,
 )
-from LastMile.db import connect, ensure_indexes
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,13 +55,6 @@ def main() -> int:
             if not setup.verify_setup():
                 print("Setup verification failed")
                 return 1
-    else:
-        conn = connect(str(db_path))
-        try:
-            ensure_indexes(conn)
-            print("Database indexes verified")
-        finally:
-            conn.close()
 
     print(f"Collecting snapshot into {db_path}…")
     with LastMileManager(
