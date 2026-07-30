@@ -10,11 +10,11 @@ import streamlit as st
 
 from components import format_snapshot_datetime
 from components.charts import (
-    TIME_AXIS_LABEL_EXPR,
     render_availability_over_time,
     render_daily_pattern,
     render_hourly_pattern,
     render_utilization_hist,
+    time_axis,
 )
 from LastMile import LastMileMetrics
 
@@ -73,18 +73,19 @@ def render(metrics_svc: LastMileMetrics) -> None:
         st.warning("No historical data in this range.")
         return
 
-    scope = "all regions" if region is None else region
+    scope = "" if region is None else f" · {region}"
     st.markdown(
         f"**{len(timeseries):,}** hourly snapshots · "
         f"{format_snapshot_datetime(timeseries['timestamp'].iloc[0])} → "
-        f"{format_snapshot_datetime(timeseries['timestamp'].iloc[-1])} · {scope}"
+        f"{format_snapshot_datetime(timeseries['timestamp'].iloc[-1])}{scope}"
     )
 
     st.subheader("Availability over time")
     st.caption(
         "Rideable bikes stack into the total fleet; available docks are the "
         "capacity to return one. GBFS counts e-bikes inside the docked bike "
-        "total, so classic is shown net of them."
+        "total, so classic is shown net of them, and free-floating bikes are "
+        "counted as San Francisco inventory."
     )
     render_availability_over_time(timeseries)
 
@@ -119,9 +120,7 @@ def render(metrics_svc: LastMileMetrics) -> None:
             .mark_line()
             .encode(
                 x=alt.X(
-                    "datetime:T",
-                    title=None,
-                    axis=alt.Axis(labelExpr=TIME_AXIS_LABEL_EXPR, labelPadding=6),
+                    "datetime:T", title=None, axis=time_axis(empty_full["datetime"])
                 ),
                 y=alt.Y("count:Q", title="Stations"),
                 color=alt.Color(

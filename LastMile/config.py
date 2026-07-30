@@ -24,13 +24,16 @@ LOW_RANGE_METERS = 5000
 
 # Walk-shed coverage: ~3-minute walk around available bikes
 COVERAGE_RADIUS_M = 300
+
 SF_BOUNDARY_GEOJSON_PATH = PROJECT_ROOT / "assets" / "sf_county_boundary.geojson"
 # Source (kept for reference; app reads the local copy only):
 # https://data.sfgov.org/resource/wamw-vt4s.geojson?county=San%20Francisco
 # California State Plane Zone III (meters) — good for SF buffering
 SF_PROJECTED_CRS = "EPSG:3310"
 
-# --- Weather (Open-Meteo) -------------------------------------------------
+
+## UNDER DEVELOPMENT -------------------------------------------------------
+# Weather (Open-Meteo) -------------------------------------------------
 # One grid point for the city; Bay Wheels' SF footprint is ~10 km across, so
 # station-level weather variation is well below ERA5/HRRR resolution.
 SF_WEATHER_LAT = 37.7749

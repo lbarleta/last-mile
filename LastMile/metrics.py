@@ -467,7 +467,8 @@ class LastMileMetrics:
         Docked bikes are reported as ``classic_available`` + ``ebikes_available``
         (GBFS counts e-bikes inside ``num_bikes_available``), and free-floating
         bikes are added as their own series so the three stack into the total
-        rideable fleet without double counting.
+        rideable fleet without double counting. Free-floating bikes count as San
+        Francisco inventory.
         """
         latest = self.get_latest_timestamp()
         since = queries.cutoff_timestamp(hours, self.timezone, latest) if latest else None

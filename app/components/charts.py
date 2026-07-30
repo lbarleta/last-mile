@@ -7,14 +7,6 @@ import pandas as pd
 import streamlit as st
 
 
-# Two-line time axis: clock time on top, calendar day underneath. Midnight
-# ticks drop the time, which is redundant once the axis steps by whole days.
-TIME_AXIS_LABEL_EXPR = (
-    "[timeFormat(datum.value, '%H') == '00' ? '' "
-    ": timeFormat(datum.value, '%-I %p'), "
-    "timeFormat(datum.value, '%b %-d')]"
-)
-
 BIKE_SERIES = ["Docked classic", "Docked e-bikes", "Free-floating"]
 SERIES_COLORS = {
     "Docked classic": "#285ab4",
@@ -22,6 +14,50 @@ SERIES_COLORS = {
     "Free-floating": "#783cc0",
     "Available docks": "#7a828a",
 }
+DOCK_DASH = [5, 3]
+
+# Hour steps the time axis may tick at, coarsest label density last.
+_TICK_STEPS_H = (1, 2, 3, 6, 12, 24, 48, 72, 168, 336, 720)
+_MAX_TICKS = 15
+
+
+def time_axis(datetimes: pd.Series, label_padding: int = 6) -> alt.Axis:
+    """
+    Two-line time axis: clock time on top, calendar day underneath.
+
+    Ticks are chosen here rather than by Vega so the leftmost one always lands
+    on the first observation. The date is printed only on the first tick of
+    each day, which keeps a day from repeating across every tick.
+    """
+    values = pd.to_datetime(pd.Series(datetimes)).dropna().sort_values()
+    if values.empty:
+        return alt.Axis(labelPadding=label_padding)
+
+    first, last = values.iloc[0], values.iloc[-1]
+    span_hours = max((last - first).total_seconds() / 3600.0, 1.0)
+    step = next(
+        (s for s in _TICK_STEPS_H if span_hours / s <= _MAX_TICKS), _TICK_STEPS_H[-1]
+    )
+
+    freq = f"{step}h"
+    ticks = [first]
+    # Subsequent ticks sit on round boundaries; drop one crowding the first.
+    for tick in pd.date_range(first.ceil(freq), last, freq=freq):
+        if tick - ticks[-1] >= pd.Timedelta(hours=step) / 2:
+            ticks.append(tick)
+
+    first_key = first.strftime("%Y-%m-%d %H")
+    label_expr = (
+        "[timeFormat(datum.value, '%-I %p'), "
+        "(hours(datum.value) == 0 || "
+        f"timeFormat(datum.value, '%Y-%m-%d %H') == '{first_key}') "
+        "? timeFormat(datum.value, '%b %-d') : '']"
+    )
+    return alt.Axis(
+        values=[tick.to_pydatetime() for tick in ticks],
+        labelExpr=label_expr,
+        labelPadding=label_padding,
+    )
 
 
 def render_availability_over_time(ts: pd.DataFrame) -> None:
@@ -52,57 +88,60 @@ def render_availability_over_time(ts: pd.DataFrame) -> None:
     docks["series"] = "Available docks"
     docks["datetime"] = pd.to_datetime(docks["timestamp"], format="%Y-%m-%d-%H:00")
 
-    domain = [*[s for s in BIKE_SERIES if s in set(bikes["series"])], "Available docks"]
-    color = alt.Color(
-        "series:N",
-        title=None,
-        scale=alt.Scale(domain=domain, range=[SERIES_COLORS[s] for s in domain]),
-        sort=domain,
-        legend=alt.Legend(
-            orient="bottom",
-            direction="horizontal",
-            symbolType="square",
-            offset=6,
-        ),
+    stacked = [s for s in BIKE_SERIES if s in set(bikes["series"])]
+    x = alt.X("datetime:T", title=None, axis=time_axis(bikes["datetime"]))
+    y = alt.Y(
+        "count:Q", title="Bikes and docks", stack="zero", scale=alt.Scale(nice=True)
     )
-    x = alt.X(
-        "datetime:T",
-        title=None,
-        axis=alt.Axis(labelExpr=TIME_AXIS_LABEL_EXPR, labelPadding=6),
-    )
+    tooltip = [
+        alt.Tooltip("datetime:T", title="Hour", format="%b %-d, %-I %p"),
+        alt.Tooltip("series:N", title="Series"),
+        alt.Tooltip("count:Q", title="Count", format=","),
+    ]
 
     bike_area = (
         alt.Chart(bikes)
         .mark_area(line={"strokeWidth": 1}, opacity=0.85)
         .encode(
             x=x,
-            y=alt.Y(
-                "count:Q",
-                title="Bikes and docks",
-                stack="zero",
-                scale=alt.Scale(nice=True),
+            y=y,
+            color=alt.Color(
+                "series:N",
+                title=None,
+                scale=alt.Scale(
+                    domain=stacked, range=[SERIES_COLORS[s] for s in stacked]
+                ),
+                sort=stacked,
+                legend=alt.Legend(
+                    orient="bottom", direction="horizontal", symbolType="square"
+                ),
             ),
-            color=color,
             order=alt.Order("series:N", sort="descending"),
-            tooltip=[
-                alt.Tooltip("datetime:T", title="Hour", format="%b %-d, %-I %p"),
-                alt.Tooltip("series:N", title="Series"),
-                alt.Tooltip("count:Q", title="Count", format=","),
-            ],
+            tooltip=tooltip,
         )
     )
+    # Docks ride a strokeDash scale rather than the colour scale so the legend
+    # draws them as the dashed line they are, not as another filled band.
     dock_line = (
         alt.Chart(docks)
-        .mark_line(strokeWidth=2, strokeDash=[5, 3])
+        .mark_line(strokeWidth=2, color=SERIES_COLORS["Available docks"])
         .encode(
             x=x,
-            y=alt.Y("count:Q", title="Bikes and docks"),
-            color=color,
-            tooltip=[
-                alt.Tooltip("datetime:T", title="Hour", format="%b %-d, %-I %p"),
-                alt.Tooltip("series:N", title="Series"),
-                alt.Tooltip("count:Q", title="Count", format=","),
-            ],
+            y=y,
+            strokeDash=alt.StrokeDash(
+                "series:N",
+                title=None,
+                scale=alt.Scale(domain=["Available docks"], range=[DOCK_DASH]),
+                legend=alt.Legend(
+                    orient="bottom",
+                    direction="horizontal",
+                    symbolType="stroke",
+                    symbolStrokeColor=SERIES_COLORS["Available docks"],
+                    symbolStrokeWidth=2,
+                    symbolDash=DOCK_DASH,
+                ),
+            ),
+            tooltip=tooltip,
         )
     )
 

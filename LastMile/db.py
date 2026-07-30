@@ -20,6 +20,11 @@ from .config import (
 )
 
 
+# Free-floating bikes have coordinates but no region, and are overwhelmingly
+# concentrated in San Francisco, so they are all attributed there.
+FREE_FLOATING_REGION = "San Francisco"
+
+
 def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """Open a read-oriented SQLite connection."""
     conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -471,43 +476,6 @@ def get_availability_timeseries(
     return df
 
 
-def _nearest_station_regions(
-    conn: sqlite3.Connection, lat: "np.ndarray", lon: "np.ndarray"
-) -> "np.ndarray":
-    """Region of the closest station to each coordinate."""
-    import numpy as np
-
-    stations = pd.read_sql_query(
-        """
-        SELECT COALESCE(region, 'Unknown') AS region, lat, lon
-        FROM stations
-        WHERE lat IS NOT NULL AND lon IS NOT NULL
-        """,
-        conn,
-    )
-    if stations.empty:
-        return np.full(len(lat), "Unknown", dtype=object)
-
-    st_lat = np.radians(stations["lat"].to_numpy(dtype=float))[None, :]
-    st_lon = np.radians(stations["lon"].to_numpy(dtype=float))[None, :]
-    regions = stations["region"].to_numpy()
-
-    out = np.empty(len(lat), dtype=object)
-    # Chunked so the pairwise matrix stays small regardless of input size.
-    for start in range(0, len(lat), 4096):
-        end = start + 4096
-        pt_lat = np.radians(lat[start:end])[:, None]
-        pt_lon = np.radians(lon[start:end])[:, None]
-        dlat = st_lat - pt_lat
-        dlon = st_lon - pt_lon
-        a = (
-            np.sin(dlat / 2) ** 2
-            + np.cos(pt_lat) * np.cos(st_lat) * np.sin(dlon / 2) ** 2
-        )
-        out[start:end] = regions[np.argmin(a, axis=1)]
-    return out
-
-
 def get_free_bike_timeseries(
     conn: sqlite3.Connection,
     since: Optional[str] = None,
@@ -516,63 +484,29 @@ def get_free_bike_timeseries(
     """
     Free-floating bike count per hourly timestamp.
 
-    Free bikes carry no region, so when one is requested each bike is credited
-    to its nearest station's region. Coordinates are rounded to ~100 m first,
-    which collapses millions of rows into a few thousand distinct locations.
+    Free bikes carry no region in GBFS, only coordinates. They are treated as
+    San Francisco inventory, which is where practically all of them sit, so
+    region breakdowns need no spatial join.
     """
-    clauses = []
+    if region is not None and region != FREE_FLOATING_REGION:
+        return pd.DataFrame(columns=["timestamp", "free_floating"])
+
     params: list = []
+    where = ""
     if since is not None:
-        clauses.append("timestamp >= ?")
+        where = "WHERE timestamp >= ?"
         params.append(since)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-    if region is None:
-        return pd.read_sql_query(
-            f"""
-            SELECT timestamp, COUNT(*) AS free_floating
-            FROM bike_status
-            {where}
-            GROUP BY timestamp
-            ORDER BY timestamp
-            """,
-            conn,
-            params=params,
-        )
-
-    cells = pd.read_sql_query(
+    return pd.read_sql_query(
         f"""
-        SELECT timestamp,
-               ROUND(lat, 3) AS lat_r,
-               ROUND(lon, 3) AS lon_r,
-               COUNT(*) AS n
+        SELECT timestamp, COUNT(*) AS free_floating
         FROM bike_status
         {where}
-        GROUP BY timestamp, lat_r, lon_r
+        GROUP BY timestamp
+        ORDER BY timestamp
         """,
         conn,
         params=params,
-    )
-    if cells.empty:
-        return pd.DataFrame(columns=["timestamp", "free_floating"])
-
-    cells = cells.dropna(subset=["lat_r", "lon_r"])
-    unique = cells[["lat_r", "lon_r"]].drop_duplicates()
-    unique["region"] = _nearest_station_regions(
-        conn,
-        unique["lat_r"].to_numpy(dtype=float),
-        unique["lon_r"].to_numpy(dtype=float),
-    )
-    merged = cells.merge(unique, on=["lat_r", "lon_r"], how="left")
-    merged = merged[merged["region"] == region]
-    if merged.empty:
-        return pd.DataFrame(columns=["timestamp", "free_floating"])
-
-    return (
-        merged.groupby("timestamp", as_index=False)["n"]
-        .sum()
-        .rename(columns={"n": "free_floating"})
-        .sort_values("timestamp")
     )
 
 
