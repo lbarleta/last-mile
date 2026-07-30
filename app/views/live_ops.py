@@ -7,6 +7,7 @@ import streamlit as st
 from components.charts import render_region_status_pct
 from components.kpis import render_live_kpis
 from components.snapshot_picker import render_snapshot_picker
+from components.tables import render_problematic_stations
 from LastMile import LastMileMetrics
 
 
@@ -17,6 +18,7 @@ def render(metrics_svc: LastMileMetrics) -> None:
 
     try:
         live = metrics_svc.get_live_ops_metrics(selected_ts)
+        problematic = metrics_svc.get_problematic_stations(selected_ts)
     except Exception as exc:
         st.error(f"Failed to load live metrics: {exc}")
         return
@@ -26,4 +28,12 @@ def render(metrics_svc: LastMileMetrics) -> None:
         return
 
     render_live_kpis(live)
-    render_region_status_pct(metrics_svc.get_station_status_by_region(selected_ts))
+    st.markdown('<div style="height: 0.85rem;"></div>', unsafe_allow_html=True)
+
+    left, right = st.columns(2, gap="large", vertical_alignment="top")
+    with left:
+        render_problematic_stations(problematic)
+    with right:
+        render_region_status_pct(
+            metrics_svc.get_station_status_by_region(selected_ts)
+        )

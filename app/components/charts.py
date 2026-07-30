@@ -107,10 +107,39 @@ def render_utilization_hist(util: pd.DataFrame) -> None:
 
 
 def render_region_status_pct(by_region: pd.DataFrame) -> None:
-    """Vertical grouped bar chart of station status mix (%) by region."""
+    """Horizontal grouped bar chart of station status mix (%) by region."""
     if by_region.empty:
         st.info("No regional station data in this snapshot.")
         return
+
+    st.markdown(
+        """
+        <style>
+          div[data-testid="stElementContainer"]:has(.lm-region-head) {
+            margin-bottom: 1.15rem !important;
+          }
+          .lm-region-head { margin: 0; }
+          .lm-region-title {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #1c1f24;
+            line-height: 1.3;
+            margin: 0;
+          }
+          .lm-region-caption {
+            font-size: 0.85rem;
+            color: #7a828a;
+            margin: 0.15rem 0 0 0;
+            line-height: 1.3;
+          }
+        </style>
+        <div class="lm-region-head">
+          <div class="lm-region-title">Station status by region</div>
+          <div class="lm-region-caption">Share of stations in each status for the selected snapshot</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     statuses = ["Empty", "Low", "Healthy", "Full"]
     value_vars = ["pct_empty", "pct_low", "pct_healthy", "pct_full"]
@@ -131,16 +160,29 @@ def render_region_status_pct(by_region: pd.DataFrame) -> None:
         }
     )
     region_order = by_region["region"].tolist()
+    x_max = float(df["pct"].max()) if not df.empty else 0.0
+    x_max = min(100.0, max(20.0, (x_max * 1.12 + 2)))
 
     chart = (
         alt.Chart(df)
         .mark_bar()
         .encode(
-            x=alt.X("region:N", title=None, sort=region_order),
             y=alt.Y(
+                "region:N",
+                title=None,
+                sort=region_order,
+                scale=alt.Scale(paddingInner=0.15, paddingOuter=0.05),
+            ),
+            x=alt.X(
                 "pct:Q",
                 title="% of stations in region",
-                scale=alt.Scale(domain=[0, 100]),
+                scale=alt.Scale(domain=[0, x_max], nice=False),
+                axis=alt.Axis(
+                    tickCount=5,
+                    titlePadding=4,
+                    titleAnchor="start",
+                    titleAlign="left",
+                ),
             ),
             color=alt.Color(
                 "status:N",
@@ -150,8 +192,18 @@ def render_region_status_pct(by_region: pd.DataFrame) -> None:
                     range=["#b42828", "#dc8c28", "#288c5a", "#285ab4"],
                 ),
                 sort=statuses,
+                legend=alt.Legend(
+                    orient="top-right",
+                    direction="vertical",
+                    title=None,
+                    offset=0,
+                    padding=0,
+                    columnPadding=8,
+                    labelOffset=2,
+                    labelSeparation=4,
+                ),
             ),
-            xOffset=alt.XOffset("status:N", sort=statuses),
+            yOffset=alt.YOffset("status:N", sort=statuses),
             tooltip=[
                 alt.Tooltip("region:N", title="Region"),
                 alt.Tooltip("status:N", title="Status"),
@@ -163,6 +215,12 @@ def render_region_status_pct(by_region: pd.DataFrame) -> None:
                 alt.Tooltip("total:Q", title="Stations in region"),
             ],
         )
-        .properties(height=340, title="Station availability by region")
+        .properties(
+            height=max(420, len(region_order) * 78),
+            padding={"left": 4, "right": 12, "top": 4, "bottom": 28},
+        )
+        .configure_view(strokeWidth=0)
+        .configure_axis(labelPadding=2, titlePadding=2)
+        .configure_legend(symbolType="square")
     )
     st.altair_chart(chart, width="stretch")

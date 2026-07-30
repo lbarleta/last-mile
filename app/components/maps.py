@@ -368,7 +368,7 @@ def _add_coverage(
             "fillOpacity": 0.28,
             "opacity": 0.65,
         },
-        tooltip="Area within 1,000 ft (~3 min walk) of an available bike",
+        tooltip="Area within 300 m (~3 min walk) of an available bike",
     ).add_to(layer)
 
 

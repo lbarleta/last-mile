@@ -9,7 +9,15 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from .config import DEFAULT_DB_PATH, DEFAULT_TIMEZONE, TIMESTAMP_FORMAT
+from .config import (
+    DEFAULT_DB_PATH,
+    DEFAULT_TIMEZONE,
+    BACKUP_STATION_RADIUS_M,
+    OPS_DAY_HOUR_END,
+    OPS_DAY_HOUR_START,
+    PROBLEMATIC_LOOKBACK_HOURS,
+    TIMESTAMP_FORMAT,
+)
 
 
 def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
@@ -144,6 +152,186 @@ def previous_hour_timestamp(timestamp: str) -> str:
     """Return the previous hourly snapshot key for a timestamp string."""
     dt = datetime.strptime(timestamp, TIMESTAMP_FORMAT) - timedelta(hours=1)
     return dt.strftime(TIMESTAMP_FORMAT)
+
+
+def is_ops_day_hour(timestamp: str) -> bool:
+    """True if timestamp falls in the daytime ops window (7:00–20:00 local)."""
+    hour = int(timestamp[11:13])
+    return OPS_DAY_HOUR_START <= hour <= OPS_DAY_HOUR_END
+
+
+def lookback_timestamps(timestamp: str, hours: int = PROBLEMATIC_LOOKBACK_HOURS) -> list[str]:
+    """Selected hour plus the previous ``hours - 1`` hourly keys."""
+    end = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
+    return [
+        (end - timedelta(hours=offset)).strftime(TIMESTAMP_FORMAT)
+        for offset in range(hours)
+    ]
+
+
+def get_problematic_stations(
+    conn: sqlite3.Connection,
+    timestamp: str,
+    *,
+    lookback_hours: int = PROBLEMATIC_LOOKBACK_HOURS,
+    backup_radius_m: float = BACKUP_STATION_RADIUS_M,
+) -> pd.DataFrame:
+    """
+    Stations that were empty or full in the lookback window.
+
+    Only daytime ops hours (7:00–20:00) count. Night snapshots in the window
+    are ignored. Ordered by hours spent empty/full (desc).
+
+    Also suggests the nearest non-problematic backup station within
+    ``backup_radius_m`` (default 900 m).
+    """
+    candidates = lookback_timestamps(timestamp, lookback_hours)
+    day_hours = [ts for ts in candidates if is_ops_day_hour(ts)]
+    empty_cols = [
+        "station_id",
+        "name",
+        "region",
+        "hours_problematic",
+        "hours_empty",
+        "hours_full",
+        "issue",
+        "backup_station",
+        "backup_distance_m",
+    ]
+    if not day_hours:
+        return pd.DataFrame(columns=empty_cols)
+
+    name_col = _station_name_expr(conn)
+    placeholders = ",".join("?" * len(day_hours))
+    query = f"""
+        SELECT
+            s.station_id,
+            {name_col} AS name,
+            COALESCE(s.region, 'Unknown') AS region,
+            SUM(
+                CASE
+                    WHEN st.num_bikes_available = 0
+                      OR st.num_docks_available = 0
+                    THEN 1 ELSE 0
+                END
+            ) AS hours_problematic,
+            SUM(
+                CASE WHEN st.num_bikes_available = 0 THEN 1 ELSE 0 END
+            ) AS hours_empty,
+            SUM(
+                CASE WHEN st.num_docks_available = 0 THEN 1 ELSE 0 END
+            ) AS hours_full
+        FROM station_status st
+        INNER JOIN stations s
+            ON s.station_id = st.station_id
+        WHERE st.timestamp IN ({placeholders})
+        GROUP BY s.station_id, {name_col}, COALESCE(s.region, 'Unknown')
+        HAVING hours_problematic > 0
+        ORDER BY hours_problematic DESC, name ASC
+    """
+    df = pd.read_sql_query(query, conn, params=tuple(day_hours))
+    if df.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    def _issue(row: pd.Series) -> str:
+        empty = int(row["hours_empty"]) > 0
+        full = int(row["hours_full"]) > 0
+        if empty and full:
+            return "Empty & full"
+        if empty:
+            return "Empty"
+        return "Full"
+
+    df["issue"] = df.apply(_issue, axis=1)
+    return _attach_backup_stations(conn, df, timestamp, backup_radius_m)
+
+
+def _haversine_m(
+    lat1: "np.ndarray",
+    lon1: "np.ndarray",
+    lat2: "np.ndarray",
+    lon2: "np.ndarray",
+):
+    import numpy as np
+
+    lat1 = np.radians(lat1)
+    lon1 = np.radians(lon1)
+    lat2 = np.radians(lat2)
+    lon2 = np.radians(lon2)
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+    )
+    return 2 * 6_371_000.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+
+
+def _attach_backup_stations(
+    conn: sqlite3.Connection,
+    problematic: pd.DataFrame,
+    timestamp: str,
+    backup_radius_m: float,
+) -> pd.DataFrame:
+    """Nearest non-problematic station within radius, if any."""
+    import numpy as np
+
+    snapshot = get_station_snapshot_at(conn, timestamp)
+    if snapshot.empty:
+        out = problematic.copy()
+        out["backup_station"] = None
+        out["backup_distance_m"] = None
+        return out
+
+    locs = snapshot[["station_id", "name", "lat", "lon"]].copy()
+    locs["lat"] = pd.to_numeric(locs["lat"], errors="coerce")
+    locs["lon"] = pd.to_numeric(locs["lon"], errors="coerce")
+    locs = locs.dropna(subset=["lat", "lon"])
+
+    problem_ids = set(problematic["station_id"].astype(str))
+    candidates = locs[~locs["station_id"].astype(str).isin(problem_ids)].copy()
+
+    out = problematic.copy()
+    backups: list[Optional[str]] = []
+    distances_m: list[Optional[float]] = []
+
+    if candidates.empty:
+        out["backup_station"] = None
+        out["backup_distance_m"] = None
+        return out
+
+    cand_lat = candidates["lat"].to_numpy(dtype=float)
+    cand_lon = candidates["lon"].to_numpy(dtype=float)
+    cand_names = candidates["name"].astype(str).to_numpy()
+
+    loc_by_id = locs.set_index(locs["station_id"].astype(str))
+
+    for station_id in out["station_id"].astype(str):
+        if station_id not in loc_by_id.index:
+            backups.append(None)
+            distances_m.append(None)
+            continue
+        row = loc_by_id.loc[station_id]
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        dist_m = _haversine_m(
+            np.array([float(row["lat"])]),
+            np.array([float(row["lon"])]),
+            cand_lat,
+            cand_lon,
+        )
+        within = dist_m <= backup_radius_m
+        if not np.any(within):
+            backups.append(None)
+            distances_m.append(None)
+            continue
+        idx = int(np.argmin(np.where(within, dist_m, np.inf)))
+        backups.append(cand_names[idx])
+        distances_m.append(float(dist_m[idx]))
+
+    out["backup_station"] = backups
+    out["backup_distance_m"] = distances_m
+    return out
 
 
 def get_free_bike_counts(

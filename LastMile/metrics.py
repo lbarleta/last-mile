@@ -358,6 +358,15 @@ class LastMileMetrics:
             return pd.DataFrame()
         return queries.get_free_bike_snapshot(self.conn, ts)
 
+    def get_problematic_stations(
+        self, timestamp: Optional[str] = None
+    ) -> pd.DataFrame:
+        """Stations empty/full in the last daytime ops hours before ``timestamp``."""
+        ts = timestamp or self.get_latest_timestamp()
+        if ts is None:
+            return pd.DataFrame()
+        return queries.get_problematic_stations(self.conn, ts)
+
     def get_top_empty_stations(self, n: int = 10) -> pd.DataFrame:
         snapshot = queries.get_latest_station_snapshot(self.conn)
         if snapshot.empty:

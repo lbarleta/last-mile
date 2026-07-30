@@ -111,15 +111,17 @@ def render_snapshot_picker(metrics_svc: LastMileMetrics) -> Optional[str]:
             key=hour_key,
         )
     with c3:
+        # Spacer matches the selectbox/date label so the control bottoms align.
         st.markdown(
             """
+            <div style="height: 1.55rem;"></div>
             <style>
               div[data-testid="stHorizontalBlock"] > div:nth-child(3) button {
-                padding: 0.2rem 0.55rem !important;
-                min-height: 1.9rem !important;
-                height: 1.9rem !important;
-                font-size: 0.78rem !important;
-                line-height: 1.2 !important;
+                min-height: 2.5rem !important;
+                height: 2.5rem !important;
+                padding: 0 0.65rem !important;
+                font-size: 0.875rem !important;
+                line-height: 1.25 !important;
               }
             </style>
             """,

@@ -296,7 +296,7 @@ def render_live_kpis(metrics: Dict[str, Any]) -> None:
               <div class="kpi-hero-value">{coverage_pct:.1f}%</div>
               {coverage_delta}
             </div>
-            <div class="kpi-hero-hint">Area within 1,000 ft (~3 min walk) of available bikes</div>
+            <div class="kpi-hero-hint">Area within 300 m (~3 min walk) of available bikes</div>
           </div>
         </div>
         """,
