@@ -22,6 +22,9 @@ BACKUP_STATION_RADIUS_M = 900
 # Free-floating e-bikes at or below this remaining range count as low-range
 LOW_RANGE_METERS = 5000
 
+# A station holding bikes and docks but below this bike share counts as "low"
+LOW_STATION_BIKE_SHARE = 0.2
+
 # Walk-shed coverage: ~3-minute walk around available bikes
 COVERAGE_RADIUS_M = 300
 

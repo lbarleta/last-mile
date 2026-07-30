@@ -518,6 +518,13 @@ class LastMileMetrics:
         """Station regions available for filtering."""
         return queries.list_regions(self.conn)
 
+    def _since_from_hours(self, hours: Optional[int]) -> Optional[str]:
+        """Window start for a trailing-hours range, anchored on the last snapshot."""
+        latest = self.get_latest_timestamp()
+        if latest is None:
+            return None
+        return queries.cutoff_timestamp(hours, self.timezone, latest)
+
     def get_availability_timeseries(
         self, hours: Optional[int] = 24, region: Optional[str] = None
     ) -> pd.DataFrame:
@@ -530,8 +537,7 @@ class LastMileMetrics:
         rideable fleet without double counting. Free-floating bikes count as San
         Francisco inventory.
         """
-        latest = self.get_latest_timestamp()
-        since = queries.cutoff_timestamp(hours, self.timezone, latest) if latest else None
+        since = self._since_from_hours(hours)
         docked = queries.get_availability_timeseries(
             self.conn, since=since, region=region
         )
@@ -703,6 +709,58 @@ class LastMileMetrics:
     ) -> pd.DataFrame:
         """Latest-snapshot station utilization rates."""
         return queries.get_utilization_snapshot(self.conn, region=region)
+
+    def get_failure_by_hour(
+        self,
+        hours: Optional[int] = 24 * 28,
+        region: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        Share of stations flagged as problematic at each clock hour.
+
+        Uses the Live Ops rule: empty or full in any of the trailing three
+        daytime ops hours (7:00–20:00). Night hours have an empty lookback, so
+        the rate is zero overnight by construction.
+        """
+        since = self._since_from_hours(hours)
+        ts = queries.get_problematic_timeseries(
+            self.conn, since=since, region=region
+        )
+        if ts.empty:
+            return pd.DataFrame(columns=["hour", "pct_empty", "pct_full", "samples"])
+
+        df = ts.copy()
+        df["hour"] = df["timestamp"].str.slice(11, 13).astype(int)
+        total = df["station_count"].replace(0, pd.NA)
+        df["pct_empty"] = df["empty_stations"] / total * 100.0
+        df["pct_full"] = df["full_stations"] / total * 100.0
+        return (
+            df.groupby("hour", as_index=False)
+            .agg(
+                pct_empty=("pct_empty", "mean"),
+                pct_full=("pct_full", "mean"),
+                samples=("timestamp", "count"),
+            )
+            .sort_values("hour")
+        )
+
+    def get_station_reliability(
+        self,
+        hours: Optional[int] = 24 * 28,
+        region: Optional[str] = None,
+        min_hours: int = 24,
+    ) -> pd.DataFrame:
+        """
+        Per-station share of hours spent empty or full over the window.
+
+        Separating the two tells an operator which fix a station needs: a
+        chronically empty one wants deliveries, a chronically full one wants
+        collections.
+        """
+        since = self._since_from_hours(hours)
+        return queries.get_station_reliability(
+            self.conn, since=since, region=region, min_hours=min_hours
+        )
 
     # --- stockout forecast ------------------------------------------------
 

@@ -13,6 +13,7 @@ from .config import (
     DEFAULT_DB_PATH,
     DEFAULT_TIMEZONE,
     BACKUP_STATION_RADIUS_M,
+    LOW_STATION_BIKE_SHARE,
     OPS_DAY_HOUR_END,
     OPS_DAY_HOUR_START,
     PROBLEMATIC_LOOKBACK_HOURS,
@@ -23,6 +24,24 @@ from .config import (
 # Free-floating bikes have coordinates but no region, and are overwhelmingly
 # concentrated in San Francisco, so they are all attributed there.
 FREE_FLOATING_REGION = "San Francisco"
+
+# Four mutually exclusive station states, ordered so they sum to the station
+# count: a station with neither bikes nor docks is counted empty, not both.
+_STATUS_COUNT_SQL = f"""
+            SUM(CASE WHEN num_bikes_available = 0 THEN 1 ELSE 0 END)
+                AS empty_stations,
+            SUM(CASE WHEN num_bikes_available > 0 AND num_docks_available = 0
+                     THEN 1 ELSE 0 END) AS full_stations,
+            SUM(CASE WHEN num_bikes_available > 0 AND num_docks_available > 0
+                      AND CAST(num_bikes_available AS REAL)
+                          / (num_bikes_available + num_docks_available)
+                          < {LOW_STATION_BIKE_SHARE}
+                     THEN 1 ELSE 0 END) AS low_stations,
+            SUM(CASE WHEN num_bikes_available > 0 AND num_docks_available > 0
+                      AND CAST(num_bikes_available AS REAL)
+                          / (num_bikes_available + num_docks_available)
+                          >= {LOW_STATION_BIKE_SHARE}
+                     THEN 1 ELSE 0 END) AS healthy_stations"""
 
 
 def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
@@ -457,8 +476,7 @@ def get_availability_timeseries(
             SUM(num_bikes_available) AS bikes_available,
             SUM(num_ebikes_available) AS ebikes_available,
             SUM(num_docks_available) AS docks_available,
-            SUM(CASE WHEN num_bikes_available = 0 THEN 1 ELSE 0 END) AS empty_stations,
-            SUM(CASE WHEN num_docks_available = 0 THEN 1 ELSE 0 END) AS full_stations,
+            {_STATUS_COUNT_SQL},
             COUNT(*) AS station_count
         FROM (
             SELECT
@@ -555,6 +573,150 @@ def get_station_status_history(
         {where}
     """
     return pd.read_sql_query(query, conn, params=params)
+
+
+def _shift_timestamp(timestamp: str, hours: int) -> str:
+    """Shift a snapshot key by a whole number of hours."""
+    dt = datetime.strptime(timestamp, TIMESTAMP_FORMAT) + timedelta(hours=hours)
+    return dt.strftime(TIMESTAMP_FORMAT)
+
+
+def get_problematic_timeseries(
+    conn: sqlite3.Connection,
+    since: Optional[str] = None,
+    region: Optional[str] = None,
+    lookback_hours: int = PROBLEMATIC_LOOKBACK_HOURS,
+) -> pd.DataFrame:
+    """
+    Stations flagged under the Live Ops problematic rule, per snapshot hour.
+
+    A station counts as empty (resp. full) at ``T`` if it was empty (full) in
+    any of the trailing ``lookback_hours`` that fall inside the daytime ops
+    window. Night hours therefore contribute nothing to the lookback, matching
+    ``get_problematic_stations``.
+    """
+    pad_since = (
+        _shift_timestamp(since, -(lookback_hours - 1)) if since is not None else None
+    )
+    clauses = []
+    params: list = []
+    if pad_since is not None:
+        clauses.append("st.timestamp >= ?")
+        params.append(pad_since)
+    if region is not None:
+        clauses.append("COALESCE(s.region, 'Unknown') = ?")
+        params.append(region)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+    flags = pd.read_sql_query(
+        f"""
+        SELECT
+            st.timestamp AS timestamp,
+            st.station_id AS station_id,
+            CASE WHEN MAX(st.num_bikes_available) = 0 THEN 1 ELSE 0 END AS is_empty,
+            CASE WHEN MAX(st.num_docks_available) = 0 THEN 1 ELSE 0 END AS is_full
+        FROM station_status st
+        INNER JOIN stations s ON s.station_id = st.station_id
+        {where}
+        GROUP BY st.timestamp, st.station_id
+        """,
+        conn,
+        params=params,
+    )
+    empty = pd.DataFrame(
+        columns=["timestamp", "empty_stations", "full_stations", "station_count"]
+    )
+    if flags.empty:
+        return empty
+
+    base = flags[["station_id", "timestamp"]].copy()
+    empty_any = pd.Series(False, index=base.index)
+    full_any = pd.Series(False, index=base.index)
+    for lag in range(lookback_hours):
+        lagged = flags[["station_id", "timestamp", "is_empty", "is_full"]].copy()
+        if lag:
+            lagged["timestamp"] = lagged["timestamp"].map(
+                lambda t, h=lag: _shift_timestamp(t, h)
+            )
+        merged = base.merge(lagged, on=["station_id", "timestamp"], how="left")
+        lookback_ts = base["timestamp"].map(lambda t, h=lag: _shift_timestamp(t, -h))
+        ops = lookback_ts.map(is_ops_day_hour)
+        empty_any = empty_any | (merged["is_empty"].fillna(0).astype(bool) & ops)
+        full_any = full_any | (merged["is_full"].fillna(0).astype(bool) & ops)
+
+    base["empty_flag"] = empty_any.astype(int)
+    base["full_flag"] = full_any.astype(int)
+    grouped = (
+        base.groupby("timestamp", as_index=False)
+        .agg(
+            empty_stations=("empty_flag", "sum"),
+            full_stations=("full_flag", "sum"),
+            station_count=("station_id", "count"),
+        )
+        .sort_values("timestamp")
+    )
+    if since is not None:
+        grouped = grouped[grouped["timestamp"] >= since]
+    return grouped.reset_index(drop=True)
+
+
+def get_station_reliability(
+    conn: sqlite3.Connection,
+    since: Optional[str] = None,
+    region: Optional[str] = None,
+    min_hours: int = 24,
+) -> pd.DataFrame:
+    """
+    Share of observed hours each station spent empty or full.
+
+    Empty takes precedence over full for the rare hour with neither bikes nor
+    docks, matching how the states are counted everywhere else.
+    """
+    name_col = _station_name_expr(conn)
+    clauses = []
+    params: list = []
+    if since is not None:
+        clauses.append("st.timestamp >= ?")
+        params.append(since)
+    if region is not None:
+        clauses.append("COALESCE(s.region, 'Unknown') = ?")
+        params.append(region)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(min_hours)
+
+    query = f"""
+        SELECT
+            station_id,
+            name,
+            region,
+            capacity,
+            COUNT(*) AS hours,
+            SUM(CASE WHEN b = 0 THEN 1 ELSE 0 END) AS hours_empty,
+            SUM(CASE WHEN b > 0 AND d = 0 THEN 1 ELSE 0 END) AS hours_full
+        FROM (
+            SELECT
+                st.station_id AS station_id,
+                {name_col} AS name,
+                COALESCE(s.region, 'Unknown') AS region,
+                s.capacity AS capacity,
+                st.timestamp AS timestamp,
+                MAX(st.num_bikes_available) AS b,
+                MAX(st.num_docks_available) AS d
+            FROM station_status st
+            INNER JOIN stations s ON s.station_id = st.station_id
+            {where}
+            GROUP BY st.timestamp, st.station_id
+        )
+        GROUP BY station_id, name, region, capacity
+        HAVING hours >= ?
+    """
+    df = pd.read_sql_query(query, conn, params=params)
+    if df.empty:
+        return df
+    df["pct_empty"] = df["hours_empty"] / df["hours"] * 100.0
+    df["pct_full"] = df["hours_full"] / df["hours"] * 100.0
+    df["pct_unusable"] = df["pct_empty"] + df["pct_full"]
+    return df.sort_values("pct_unusable", ascending=False)
 
 
 def get_utilization_snapshot(

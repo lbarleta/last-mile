@@ -4,18 +4,17 @@ from __future__ import annotations
 
 from typing import Optional
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
 from components import format_snapshot_datetime
 from components.charts import (
-    hour_text,
     render_availability_over_time,
     render_bikes_out_by_day,
     render_bikes_out_by_hour,
-    render_utilization_hist,
-    time_axis,
+    render_failure_by_hour,
+    render_station_reliability,
+    render_station_status_mix,
 )
 from LastMile import LastMileMetrics
 
@@ -43,6 +42,36 @@ def _load_timeseries(
     collected snapshot invalidates the cached frame.
     """
     return _metrics_svc.get_availability_timeseries(hours=hours, region=region)
+
+
+@st.cache_data(show_spinner=False)
+def _load_reliability(
+    _metrics_svc: LastMileMetrics,
+    hours: Optional[int],
+    region: Optional[str],
+    latest: Optional[str],
+) -> pd.DataFrame:
+    """Per-station empty/full shares; cached because it scans every snapshot."""
+    return _metrics_svc.get_station_reliability(hours=hours, region=region)
+
+
+@st.cache_data(show_spinner=False)
+def _load_problematic_by_hour(
+    _metrics_svc: LastMileMetrics,
+    hours: Optional[int],
+    region: Optional[str],
+    latest: Optional[str],
+) -> pd.DataFrame:
+    """3h lookback problematic rates by clock hour; cached for the same reason."""
+    return _metrics_svc.get_failure_by_hour(hours=hours, region=region)
+
+
+STATION_STATUS_BLURB = (
+    "An ideal station always has bikes to take and docks to return to, with a "
+    "slight advantage for the first, as there are more docks than bikes in the "
+    "system. Stations that are consistently full or empty are considered "
+    "failures."
+)
 
 
 def _bikes_out_blurb() -> str:
@@ -83,7 +112,10 @@ def render(metrics_svc: LastMileMetrics) -> None:
                 else _load_timeseries(metrics_svc, hours, None, latest)
             )
             bikes_out = metrics_svc.get_bikes_out_patterns(timeseries=systemwide)
-            utilization = metrics_svc.get_utilization_distribution(region=region)
+            reliability = _load_reliability(metrics_svc, hours, region, latest)
+            failure_by_hour = _load_problematic_by_hour(
+                metrics_svc, hours, region, latest
+            )
         except Exception as exc:
             st.error(f"Failed to load historical metrics: {exc}")
             return
@@ -102,6 +134,29 @@ def render(metrics_svc: LastMileMetrics) -> None:
     st.subheader("Bike and Dock Availability")
     render_availability_over_time(timeseries)
 
+    st.subheader("Stations")
+    st.caption(STATION_STATUS_BLURB)
+
+    c1, c2, c3 = st.columns(3, gap="large")
+    with c1:
+        st.markdown("##### Status over time")
+        st.caption("Share of stations in each state, hour by hour")
+        render_station_status_mix(timeseries)
+    with c2:
+        st.markdown("##### Problematic stations by hour")
+        st.caption(
+            "Share of stations empty or full in any of the trailing 3 daytime "
+            "hours (7am–8pm)"
+        )
+        render_failure_by_hour(failure_by_hour)
+    with c3:
+        st.markdown("##### Recurrent Failures")
+        st.caption(
+            "Each dot is a station; size is dock capacity. "
+            "The dashed line marks 25% of hours in failure mode."
+        )
+        render_station_reliability(reliability)
+
     st.subheader("Bike Utilization (system-wide)")
     st.caption(_bikes_out_blurb())
 
@@ -114,45 +169,3 @@ def render(metrics_svc: LastMileMetrics) -> None:
         st.markdown("##### Peak days")
         st.caption("Average bikes in use by day of week")
         render_bikes_out_by_day(bikes_out["by_day"])
-
-    st.subheader("Station utilization (latest snapshot)")
-    st.caption("Share of occupied capacity: bikes / (bikes + docks)")
-    render_utilization_hist(utilization)
-
-    with st.expander("Empty / full stations over time"):
-        empty_full = timeseries[["timestamp", "empty_stations", "full_stations"]].melt(
-            id_vars=["timestamp"],
-            var_name="metric",
-            value_name="count",
-        )
-        empty_full["datetime"] = pd.to_datetime(
-            empty_full["timestamp"], format="%Y-%m-%d-%H:00"
-        )
-        empty_full["hour_label"] = hour_text(empty_full["datetime"])
-        empty_full["metric"] = empty_full["metric"].map(
-            {"empty_stations": "Empty", "full_stations": "Full"}
-        )
-        chart = (
-            alt.Chart(empty_full)
-            .mark_line()
-            .encode(
-                x=alt.X(
-                    "datetime:T", title=None, axis=time_axis(empty_full["datetime"])
-                ),
-                y=alt.Y("count:Q", title="Stations"),
-                color=alt.Color(
-                    "metric:N",
-                    title=None,
-                    scale=alt.Scale(
-                        domain=["Empty", "Full"], range=["#b42828", "#285ab4"]
-                    ),
-                ),
-                tooltip=[
-                    alt.Tooltip("hour_label:N", title="Hour"),
-                    alt.Tooltip("metric:N", title="Status"),
-                    alt.Tooltip("count:Q", title="Stations"),
-                ],
-            )
-            .properties(height=260)
-        )
-        st.altair_chart(chart, width="stretch")
