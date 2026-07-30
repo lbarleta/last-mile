@@ -17,9 +17,8 @@ LOW_RANGE_METERS = 5000
 # Walk-shed coverage: ~3-minute walk around available bikes
 COVERAGE_RADIUS_FT = 1000
 COVERAGE_RADIUS_M = COVERAGE_RADIUS_FT * 0.3048
-SF_BOUNDARY_GEOJSON_URL = (
-    "https://raw.githubusercontent.com/johan/world.geo.json/master/"
-    "countries/USA/CA/San Francisco.geo.json"
-)
+SF_BOUNDARY_GEOJSON_PATH = PROJECT_ROOT / "assets" / "sf_county_boundary.geojson"
+# Source (kept for reference; app reads the local copy only):
+# https://data.sfgov.org/resource/wamw-vt4s.geojson?county=San%20Francisco
 # California State Plane Zone III (meters) — good for SF buffering
 SF_PROJECTED_CRS = "EPSG:3310"

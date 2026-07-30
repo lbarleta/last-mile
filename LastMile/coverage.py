@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-import requests
 from pyproj import Transformer
 from shapely.geometry import Point, mapping, shape
 from shapely.ops import transform, unary_union
 
 from .config import (
     COVERAGE_RADIUS_M,
-    SF_BOUNDARY_GEOJSON_URL,
+    SF_BOUNDARY_GEOJSON_PATH,
     SF_PROJECTED_CRS,
 )
 
@@ -25,11 +26,15 @@ _BBOX_PAD_DEG = 0.01
 
 @lru_cache(maxsize=1)
 def load_sf_boundary() -> Any:
-    """Load San Francisco city boundary as a shapely geometry (WGS84)."""
-    resp = requests.get(SF_BOUNDARY_GEOJSON_URL, timeout=30)
-    resp.raise_for_status()
-    collection = resp.json()
-    geoms = [shape(feat["geometry"]) for feat in collection["features"]]
+    """Load San Francisco county boundary from the local GeoJSON asset (WGS84)."""
+    path = Path(SF_BOUNDARY_GEOJSON_PATH)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"SF boundary GeoJSON not found at {path}. "
+            "Expected assets/sf_county_boundary.geojson in the repo."
+        )
+    collection = json.loads(path.read_text(encoding="utf-8"))
+    geoms = [shape(feat["geometry"]) for feat in collection.get("features", [])]
     if not geoms:
         raise ValueError("SF boundary GeoJSON has no features")
     return unary_union(geoms)

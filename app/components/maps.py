@@ -51,11 +51,7 @@ class SidePanel(MacroElement):
                 var div = L.DomUtil.create('div', 'lm-side-panel');
                 div.innerHTML = `
                   <div class="lm-panel-section">
-                    <div class="lm-panel-heading">Layers</div>
-                    <label class="lm-layer-row">
-                      <input type="checkbox" id="lm-toggle-coverage" checked>
-                      <span>Coverage (1,000 ft)</span>
-                    </label>
+                    <div class="lm-panel-heading">Data layers</div>
                     <label class="lm-layer-row">
                       <input type="checkbox" id="lm-toggle-stations" checked>
                       <span>Stations</span>
@@ -63,6 +59,14 @@ class SidePanel(MacroElement):
                     <label class="lm-layer-row">
                       <input type="checkbox" id="lm-toggle-bikes" checked>
                       <span>Free-floating bikes</span>
+                    </label>
+                  </div>
+                  <div class="lm-panel-spacer"></div>
+                  <div class="lm-panel-section">
+                    <div class="lm-panel-heading">Analysis layers</div>
+                    <label class="lm-layer-row">
+                      <input type="checkbox" id="lm-toggle-coverage" checked>
+                      <span>3-min Coverage</span>
                     </label>
                     <label class="lm-layer-row">
                       <input type="checkbox" id="lm-toggle-hotspots" checked>
@@ -80,12 +84,12 @@ class SidePanel(MacroElement):
                     <div class="lm-legend-row"><span class="lm-tri"></span>Free-floating bike</div>
                     <div class="lm-legend-spacer"></div>
                     <div class="lm-legend-row">
-                      <span class="lm-heat"></span>
-                      Empty/low density
+                      <span class="lm-cover"></span>
+                      3-min Coverage
                     </div>
                     <div class="lm-legend-row">
-                      <span class="lm-cover"></span>
-                      1,000 ft walk coverage
+                      <span class="lm-heat"></span>
+                      Empty/low density
                     </div>
                   </div>
                 `;
@@ -172,6 +176,7 @@ PANEL_CSS = """
     margin-bottom: 8px;
   }
   .lm-panel-section { margin: 0; }
+  .lm-panel-spacer { height: 10px; }
   .lm-panel-divider {
     height: 1px;
     background: #e6eaee;
@@ -355,7 +360,7 @@ def _add_coverage(
 ) -> None:
     folium.GeoJson(
         coverage_geojson,
-        name="Coverage (1,000 ft)",
+        name="3-min Coverage",
         style_function=lambda _: {
             "fillColor": "#1f6f54",
             "color": "#1f6f54",
@@ -363,7 +368,7 @@ def _add_coverage(
             "fillOpacity": 0.28,
             "opacity": 0.65,
         },
-        tooltip="Within 1,000 ft of an available bike",
+        tooltip="Area within 1,000 ft (~3 min walk) of an available bike",
     ).add_to(layer)
 
 
@@ -408,7 +413,7 @@ def render_ops_map(
     coverage_layer = None
 
     if has_coverage:
-        coverage_layer = folium.FeatureGroup(name="Coverage (1,000 ft)", show=True)
+        coverage_layer = folium.FeatureGroup(name="3-min Coverage", show=True)
         _add_coverage(coverage_layer, coverage_geojson)
         coverage_layer.add_to(fmap)
 
