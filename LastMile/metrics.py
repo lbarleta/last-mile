@@ -12,6 +12,7 @@ from .config import (
     DEFAULT_TIMEZONE,
     FORECAST_RISK_THRESHOLD,
     LOW_RANGE_METERS,
+    SUPPLY_BASELINE_DAYS,
     TIMESTAMP_FORMAT,
 )
 from . import db as queries
@@ -123,6 +124,16 @@ class LastMileMetrics:
         current["coverage_geojson"] = coverage["coverage_geojson"]
         current["coverage_n_sources"] = coverage["n_sources"]
 
+        open_docks = current["docks_available"]
+        ratio = all_bikes / open_docks * 10.0 if open_docks else None
+        typical, samples = self._supply_ratio_baseline(current["timestamp"])
+        current["bikes_per_10_docks"] = ratio
+        current["bikes_per_10_docks_typical"] = typical
+        current["bikes_per_10_docks_samples"] = samples
+        current["bikes_per_10_docks_vs_typical"] = (
+            ratio - typical if ratio is not None and typical is not None else None
+        )
+
         deltas = self._kpi_deltas(current, prior)
         if prior is not None and prior_free is not None:
             prior_all = prior["total_bikes"] + prior_free["total"]
@@ -210,6 +221,40 @@ class LastMileMetrics:
             "deltas": deltas,
         }
 
+    def _supply_ratio_baseline(
+        self, timestamp: str, days: int = SUPPLY_BASELINE_DAYS
+    ) -> tuple[Optional[float], int]:
+        """
+        Mean bikes per 10 docks at the same hour of day over the trailing window.
+
+        The ratio sits in a narrow band overall but follows a daily cycle, so a
+        flat average would read as drift. Holding the hour fixed makes the
+        comparison show only departures from the normal rhythm.
+        """
+        origin = pd.to_datetime(timestamp, format=TIMESTAMP_FORMAT, errors="coerce")
+        if pd.isna(origin):
+            return None, 0
+        since = (origin - pd.Timedelta(days=days)).strftime(TIMESTAMP_FORMAT)
+        until = (origin - pd.Timedelta(hours=1)).strftime(TIMESTAMP_FORMAT)
+        hour = origin.strftime("%H")
+
+        docked = queries.get_availability_timeseries(
+            self.conn, since=since, until=until, hour_of_day=hour
+        )
+        if docked.empty:
+            return None, 0
+        free = queries.get_free_bike_timeseries(
+            self.conn, since=since, until=until, hour_of_day=hour
+        )
+        merged = docked.merge(free, on="timestamp", how="left")
+        merged["free_floating"] = merged["free_floating"].fillna(0)
+        bikes = merged["bikes_available"] + merged["free_floating"]
+        open_docks = merged["docks_available"].where(merged["docks_available"] > 0)
+        ratio = (bikes / open_docks * 10.0).dropna()
+        if ratio.empty:
+            return None, 0
+        return float(ratio.mean()), int(ratio.size)
+
     def _empty_live_ops_metrics(self, snapshot: pd.DataFrame) -> Dict[str, Any]:
         return {
             "timestamp": None,
@@ -247,6 +292,10 @@ class LastMileMetrics:
             "disabled_bikes_total": 0,
             "pct_disabled_bikes": 0.0,
             "avg_dist_to_station_m": None,
+            "bikes_per_10_docks": None,
+            "bikes_per_10_docks_typical": None,
+            "bikes_per_10_docks_samples": 0,
+            "bikes_per_10_docks_vs_typical": None,
             "pct_sf_coverage": 0.0,
             "coverage_geojson": None,
             "coverage_n_sources": 0,

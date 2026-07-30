@@ -80,13 +80,7 @@ def render(metrics_svc: LastMileMetrics) -> None:
         f"{format_snapshot_datetime(timeseries['timestamp'].iloc[-1])}{scope}"
     )
 
-    st.subheader("Availability over time")
-    st.caption(
-        "Rideable bikes stack into the total fleet; available docks are the "
-        "capacity to return one. GBFS counts e-bikes inside the docked bike "
-        "total, so classic is shown net of them, and free-floating bikes are "
-        "counted as San Francisco inventory."
-    )
+    st.subheader("Bike and Dock Availability")
     render_availability_over_time(timeseries)
 
     c1, c2 = st.columns(2)

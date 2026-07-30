@@ -422,6 +422,8 @@ def get_availability_timeseries(
     conn: sqlite3.Connection,
     since: Optional[str] = None,
     region: Optional[str] = None,
+    until: Optional[str] = None,
+    hour_of_day: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Docked availability aggregated by hourly timestamp.
@@ -435,6 +437,12 @@ def get_availability_timeseries(
     if since is not None:
         clauses.append("st.timestamp >= ?")
         params.append(since)
+    if until is not None:
+        clauses.append("st.timestamp <= ?")
+        params.append(until)
+    if hour_of_day is not None:
+        clauses.append("substr(st.timestamp, 12, 2) = ?")
+        params.append(hour_of_day)
     if region is not None:
         clauses.append("COALESCE(s.region, 'Unknown') = ?")
         params.append(region)
@@ -480,6 +488,8 @@ def get_free_bike_timeseries(
     conn: sqlite3.Connection,
     since: Optional[str] = None,
     region: Optional[str] = None,
+    until: Optional[str] = None,
+    hour_of_day: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Free-floating bike count per hourly timestamp.
@@ -491,11 +501,18 @@ def get_free_bike_timeseries(
     if region is not None and region != FREE_FLOATING_REGION:
         return pd.DataFrame(columns=["timestamp", "free_floating"])
 
+    clauses = []
     params: list = []
-    where = ""
     if since is not None:
-        where = "WHERE timestamp >= ?"
+        clauses.append("timestamp >= ?")
         params.append(since)
+    if until is not None:
+        clauses.append("timestamp <= ?")
+        params.append(until)
+    if hour_of_day is not None:
+        clauses.append("substr(timestamp, 12, 2) = ?")
+        params.append(hour_of_day)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     return pd.read_sql_query(
         f"""

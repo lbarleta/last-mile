@@ -25,6 +25,10 @@ LOW_RANGE_METERS = 5000
 # Walk-shed coverage: ~3-minute walk around available bikes
 COVERAGE_RADIUS_M = 300
 
+# Trailing window for the "typical for this hour" supply-balance baseline.
+# The ratio swings on a daily cycle, so the baseline holds hour of day fixed.
+SUPPLY_BASELINE_DAYS = 28
+
 SF_BOUNDARY_GEOJSON_PATH = PROJECT_ROOT / "assets" / "sf_county_boundary.geojson"
 # Source (kept for reference; app reads the local copy only):
 # https://data.sfgov.org/resource/wamw-vt4s.geojson?county=San%20Francisco

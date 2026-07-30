@@ -73,30 +73,42 @@ def render_availability_over_time(ts: pd.DataFrame) -> None:
     }
     available = [col for col in label_map if col in ts.columns]
 
-    bikes = ts.melt(
-        id_vars=["timestamp"],
+    wide = ts.copy()
+    wide["datetime"] = pd.to_datetime(wide["timestamp"], format="%Y-%m-%d-%H:00")
+    if "total_bikes" not in wide.columns:
+        wide["total_bikes"] = sum(wide[c] for c in available)
+    tip_cols = [
+        "datetime",
+        "total_bikes",
+        "docks_available",
+        "classic_available",
+        "ebikes_available",
+        "free_floating",
+    ]
+
+    bikes = wide.melt(
+        id_vars=["timestamp", "datetime"],
         value_vars=available,
         var_name="metric",
         value_name="count",
     )
     bikes["series"] = bikes["metric"].map(label_map)
-    bikes["datetime"] = pd.to_datetime(bikes["timestamp"], format="%Y-%m-%d-%H:00")
+    bikes = bikes.merge(wide[tip_cols], on="datetime", how="left")
 
-    docks = ts[["timestamp", "docks_available"]].rename(
-        columns={"docks_available": "count"}
-    )
+    docks = wide[tip_cols].copy()
+    docks["count"] = docks["docks_available"]
     docks["series"] = "Available docks"
-    docks["datetime"] = pd.to_datetime(docks["timestamp"], format="%Y-%m-%d-%H:00")
 
     stacked = [s for s in BIKE_SERIES if s in set(bikes["series"])]
     x = alt.X("datetime:T", title=None, axis=time_axis(bikes["datetime"]))
-    y = alt.Y(
-        "count:Q", title="Bikes and docks", stack="zero", scale=alt.Scale(nice=True)
-    )
+    y = alt.Y("count:Q", title=None, stack="zero", scale=alt.Scale(nice=True))
     tooltip = [
         alt.Tooltip("datetime:T", title="Hour", format="%b %-d, %-I %p"),
-        alt.Tooltip("series:N", title="Series"),
-        alt.Tooltip("count:Q", title="Count", format=","),
+        alt.Tooltip("total_bikes:Q", title="Total bikes", format=","),
+        alt.Tooltip("docks_available:Q", title="Total docks", format=","),
+        alt.Tooltip("classic_available:Q", title="Docked classic", format=","),
+        alt.Tooltip("ebikes_available:Q", title="Docked e-bikes", format=","),
+        alt.Tooltip("free_floating:Q", title="Free-floating", format=","),
     ]
 
     bike_area = (
@@ -120,23 +132,26 @@ def render_availability_over_time(ts: pd.DataFrame) -> None:
             tooltip=tooltip,
         )
     )
-    # Docks ride a strokeDash scale rather than the colour scale so the legend
-    # draws them as the dashed line they are, not as another filled band.
+    # Docks use an independent colour scale so the legend can be a stroke
+    # symbol with the same dash pattern as the line (strokeDash encoding
+    # alone often draws a solid legend mark in Streamlit's Vega renderer).
     dock_line = (
         alt.Chart(docks)
-        .mark_line(strokeWidth=2, color=SERIES_COLORS["Available docks"])
+        .mark_line(strokeWidth=2, strokeDash=DOCK_DASH)
         .encode(
             x=x,
             y=y,
-            strokeDash=alt.StrokeDash(
+            color=alt.Color(
                 "series:N",
                 title=None,
-                scale=alt.Scale(domain=["Available docks"], range=[DOCK_DASH]),
+                scale=alt.Scale(
+                    domain=["Available docks"],
+                    range=[SERIES_COLORS["Available docks"]],
+                ),
                 legend=alt.Legend(
                     orient="bottom",
                     direction="horizontal",
                     symbolType="stroke",
-                    symbolStrokeColor=SERIES_COLORS["Available docks"],
                     symbolStrokeWidth=2,
                     symbolDash=DOCK_DASH,
                 ),
@@ -147,6 +162,7 @@ def render_availability_over_time(ts: pd.DataFrame) -> None:
 
     chart = (
         (bike_area + dock_line)
+        .resolve_scale(color="independent")
         .properties(height=340, padding={"left": 4, "right": 12, "top": 4, "bottom": 8})
         .configure_view(strokeWidth=0)
     )

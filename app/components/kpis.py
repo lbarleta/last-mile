@@ -116,7 +116,9 @@ def _inject_kpi_styles() -> None:
             }
             .kpi-hero {
                 display: flex;
+                flex-wrap: wrap;
                 justify-content: center;
+                gap: 0.65rem;
                 margin: 0 0 1rem 0;
             }
             .kpi-hero-card {
@@ -125,9 +127,15 @@ def _inject_kpi_styles() -> None:
                 border-radius: 10px;
                 background: #ffffff;
                 padding: 1rem 1.75rem;
-                min-width: min(100%, 320px);
+                flex: 1 1 300px;
+                max-width: 420px;
                 text-align: center;
                 overflow: visible;
+            }
+            .kpi-hero-note {
+                font-size: 0.75rem;
+                color: #7a828a;
+                margin-top: 0.3rem;
             }
             .kpi-hero-label {
                 font-size: 0.85rem;
@@ -170,6 +178,28 @@ def _help_icon(hint: str) -> str:
 
 def _fmt_pct_with_count(pct: float, count: int) -> str:
     return f'{pct:.1f}% <span class="kpi-count">({count:,})</span>'
+
+
+def _hour_label(timestamp: Optional[str]) -> str:
+    """Snapshot hour as a plain clock label, e.g. "4 pm"."""
+    try:
+        hour = int(str(timestamp)[11:13])
+    except (TypeError, ValueError):
+        return "this hour"
+    suffix = "am" if hour < 12 else "pm"
+    return f"{hour % 12 or 12} {suffix}"
+
+
+def _fmt_vs_typical(
+    delta: Optional[float], timestamp: Optional[str], samples: int
+) -> str:
+    if delta is None or samples == 0:
+        return "no baseline for this hour yet"
+    hour = _hour_label(timestamp)
+    if abs(delta) < 0.05:
+        return f"typical for {hour}"
+    direction = "above" if delta > 0 else "below"
+    return f"{abs(delta):.1f} {direction} typical for {hour}"
 
 
 def _fmt_distance_m(meters: Optional[float]) -> str:
@@ -341,11 +371,31 @@ def render_live_kpis(metrics: Dict[str, Any]) -> None:
         ),
     ]
 
+    balance = metrics.get("bikes_per_10_docks")
+    balance_note = _fmt_vs_typical(
+        metrics.get("bikes_per_10_docks_vs_typical"),
+        metrics.get("timestamp"),
+        int(metrics.get("bikes_per_10_docks_samples") or 0),
+    )
     coverage_pct = float(metrics.get("pct_sf_coverage") or 0.0)
     coverage_delta = _fmt_delta(deltas.get("pct_sf_coverage"), as_pp=True)
+    coverage_note = "vs prior hour" if coverage_delta else "no prior hour"
     st.markdown(
         f"""
         <div class="kpi-hero">
+          <div class="kpi-hero-card">
+            {_help_icon(
+                "Rideable bikes (docked + free-floating) for every 10 open docks. "
+                "Compared with the same hour over the past 4 weeks."
+            )}
+            <div class="kpi-hero-label">Bikes per 10 docks</div>
+            <div class="kpi-value-row">
+              <div class="kpi-hero-value">
+                {f"{balance:.1f}" if balance is not None else "n/a"}
+              </div>
+            </div>
+            <div class="kpi-hero-note">{balance_note}</div>
+          </div>
           <div class="kpi-hero-card">
             {_help_icon("Area within 300 m (~3 min walk) of available bikes")}
             <div class="kpi-hero-label">Coverage (San Francisco)</div>
@@ -353,6 +403,7 @@ def render_live_kpis(metrics: Dict[str, Any]) -> None:
               <div class="kpi-hero-value">{coverage_pct:.1f}%</div>
               {coverage_delta}
             </div>
+            <div class="kpi-hero-note">{coverage_note}</div>
           </div>
         </div>
         """,
