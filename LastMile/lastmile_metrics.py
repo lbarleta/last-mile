@@ -13,6 +13,7 @@ from .config import (
     LOW_RANGE_METERS,
     TIMESTAMP_FORMAT,
 )
+from . import coverage as coverage_mod
 from . import lastmile_queries as queries
 
 
@@ -115,6 +116,11 @@ class LastMileMetrics:
             snapshot, free_bike_locs
         )
 
+        coverage = coverage_mod.compute_sf_coverage(snapshot, free_bike_locs)
+        current["pct_sf_coverage"] = coverage["pct_coverage"]
+        current["coverage_geojson"] = coverage["coverage_geojson"]
+        current["coverage_n_sources"] = coverage["n_sources"]
+
         deltas = self._kpi_deltas(current, prior)
         if prior is not None and prior_free is not None:
             prior_all = prior["total_bikes"] + prior_free["total"]
@@ -175,6 +181,13 @@ class LastMileMetrics:
                 )
             else:
                 deltas["avg_dist_to_station_m"] = None
+
+            prior_cov = coverage_mod.compute_sf_coverage(
+                prior_snapshot, prior_bike_locs
+            )
+            deltas["pct_sf_coverage"] = (
+                current["pct_sf_coverage"] - prior_cov["pct_coverage"]
+            )
         else:
             deltas["available_bikes"] = None
             deltas["pct_docked_classic"] = None
@@ -186,6 +199,7 @@ class LastMileMetrics:
             deltas["low_range_bikes"] = None
             deltas["pct_low_range"] = None
             deltas["avg_dist_to_station_m"] = None
+            deltas["pct_sf_coverage"] = None
 
         return {
             **current,
@@ -231,6 +245,9 @@ class LastMileMetrics:
             "disabled_bikes_total": 0,
             "pct_disabled_bikes": 0.0,
             "avg_dist_to_station_m": None,
+            "pct_sf_coverage": 0.0,
+            "coverage_geojson": None,
+            "coverage_n_sources": 0,
             "stations": snapshot,
             "deltas": {},
         }

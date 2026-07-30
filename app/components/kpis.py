@@ -70,6 +70,41 @@ def _inject_kpi_styles() -> None:
                 color: #7a828a;
                 margin: 0.15rem 0 0.4rem 0;
             }
+            .kpi-hero {
+                display: flex;
+                justify-content: center;
+                margin: 0 0 1rem 0;
+            }
+            .kpi-hero-card {
+                border: 1px solid #d5d9de;
+                border-radius: 10px;
+                background: #ffffff;
+                padding: 1rem 1.75rem;
+                min-width: min(100%, 320px);
+                text-align: center;
+            }
+            .kpi-hero-label {
+                font-size: 0.85rem;
+                font-weight: 600;
+                letter-spacing: 0.03em;
+                text-transform: uppercase;
+                color: #5c636b;
+                margin-bottom: 0.35rem;
+            }
+            .kpi-hero-value {
+                font-size: 2rem;
+                font-weight: 700;
+                color: #1c1f24;
+                line-height: 1.2;
+            }
+            .kpi-hero-hint {
+                font-size: 0.72rem;
+                color: #9aa1a9;
+                margin-top: 0.35rem;
+            }
+            .kpi-hero .kpi-value-row {
+                justify-content: center;
+            }
         </style>
         """,
         unsafe_allow_html=True,
@@ -249,6 +284,24 @@ def render_live_kpis(metrics: Dict[str, Any]) -> None:
             _fmt_delta(deltas.get("pct_disabled_bikes"), as_pp=True),
         ),
     ]
+
+    coverage_pct = float(metrics.get("pct_sf_coverage") or 0.0)
+    coverage_delta = _fmt_delta(deltas.get("pct_sf_coverage"), as_pp=True)
+    st.markdown(
+        f"""
+        <div class="kpi-hero">
+          <div class="kpi-hero-card">
+            <div class="kpi-hero-label">Coverage (San Francisco)</div>
+            <div class="kpi-value-row">
+              <div class="kpi-hero-value">{coverage_pct:.1f}%</div>
+              {coverage_delta}
+            </div>
+            <div class="kpi-hero-hint">Within 1,000 ft (~3 min walk) of available bikes</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown('<div class="kpi-section-label">Stations</div>', unsafe_allow_html=True)
     st.markdown(_kpi_row(station_cards), unsafe_allow_html=True)

@@ -13,3 +13,13 @@ TIMESTAMP_FORMAT = "%Y-%m-%d-%H:00"
 
 # Free-floating e-bikes at or below this remaining range count as low-range
 LOW_RANGE_METERS = 5000
+
+# Walk-shed coverage: ~3-minute walk around available bikes
+COVERAGE_RADIUS_FT = 1000
+COVERAGE_RADIUS_M = COVERAGE_RADIUS_FT * 0.3048
+SF_BOUNDARY_GEOJSON_URL = (
+    "https://raw.githubusercontent.com/johan/world.geo.json/master/"
+    "countries/USA/CA/San Francisco.geo.json"
+)
+# California State Plane Zone III (meters) — good for SF buffering
+SF_PROJECTED_CRS = "EPSG:3310"

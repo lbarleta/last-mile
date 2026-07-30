@@ -44,6 +44,7 @@ class SidePanel(MacroElement):
             var stationLayer = {{ this.station_layer }};
             var bikeLayer = {{ this.bike_layer }};
             var hotspotLayer = {{ this.hotspot_layer }};
+            var coverageLayer = {{ this.coverage_layer }};
 
             var panel = L.control({position: 'topright'});
             panel.onAdd = function() {
@@ -51,6 +52,10 @@ class SidePanel(MacroElement):
                 div.innerHTML = `
                   <div class="lm-panel-section">
                     <div class="lm-panel-heading">Layers</div>
+                    <label class="lm-layer-row">
+                      <input type="checkbox" id="lm-toggle-coverage" checked>
+                      <span>Coverage (1,000 ft)</span>
+                    </label>
                     <label class="lm-layer-row">
                       <input type="checkbox" id="lm-toggle-stations" checked>
                       <span>Stations</span>
@@ -77,6 +82,10 @@ class SidePanel(MacroElement):
                     <div class="lm-legend-row">
                       <span class="lm-heat"></span>
                       Empty/low density
+                    </div>
+                    <div class="lm-legend-row">
+                      <span class="lm-cover"></span>
+                      1,000 ft walk coverage
                     </div>
                   </div>
                 `;
@@ -105,6 +114,7 @@ class SidePanel(MacroElement):
                 });
             }
 
+            bindToggle('lm-toggle-coverage', coverageLayer, {{ this.show_coverage|tojson }});
             bindToggle('lm-toggle-stations', stationLayer, {{ this.show_stations|tojson }});
             bindToggle('lm-toggle-bikes', bikeLayer, {{ this.show_bikes|tojson }});
             bindToggle('lm-toggle-hotspots', hotspotLayer, {{ this.show_hotspots|tojson }});
@@ -118,6 +128,7 @@ class SidePanel(MacroElement):
         station_layer: Optional[folium.FeatureGroup],
         bike_layer: Optional[folium.FeatureGroup],
         hotspot_layer: Optional[HeatMap] = None,
+        coverage_layer: Optional[folium.FeatureGroup] = None,
     ):
         super().__init__()
         self.station_layer = (
@@ -127,9 +138,13 @@ class SidePanel(MacroElement):
         self.hotspot_layer = (
             hotspot_layer.get_name() if hotspot_layer is not None else "null"
         )
+        self.coverage_layer = (
+            coverage_layer.get_name() if coverage_layer is not None else "null"
+        )
         self.show_stations = station_layer is not None
         self.show_bikes = bike_layer is not None
         self.show_hotspots = hotspot_layer is not None
+        self.show_coverage = coverage_layer is not None
 
 
 PANEL_CSS = """
@@ -206,6 +221,15 @@ PANEL_CSS = """
     display: inline-block;
     flex: 0 0 12px;
     background: linear-gradient(90deg, #fdc978 0%, #f07c3a 50%, #9b1c1c 100%);
+  }
+  .lm-cover {
+    width: 12px;
+    height: 10px;
+    border-radius: 2px;
+    display: inline-block;
+    flex: 0 0 12px;
+    background: rgba(31, 111, 84, 0.45);
+    border: 1px solid #1f6f54;
   }
   /* Hide default Leaflet attribution clutter in the iframe a bit less critical */
   .leaflet-control-layers { display: none !important; }
@@ -326,14 +350,33 @@ def _add_free_bikes(layer: folium.FeatureGroup, bikes: pd.DataFrame) -> None:
         ).add_to(layer)
 
 
+def _add_coverage(
+    layer: folium.FeatureGroup, coverage_geojson: dict
+) -> None:
+    folium.GeoJson(
+        coverage_geojson,
+        name="Coverage (1,000 ft)",
+        style_function=lambda _: {
+            "fillColor": "#1f6f54",
+            "color": "#1f6f54",
+            "weight": 1,
+            "fillOpacity": 0.28,
+            "opacity": 0.65,
+        },
+        tooltip="Within 1,000 ft of an available bike",
+    ).add_to(layer)
+
+
 def render_ops_map(
     stations: pd.DataFrame,
     free_bikes: Optional[pd.DataFrame] = None,
+    coverage_geojson: Optional[dict] = None,
 ) -> None:
     """Render stations and free-floating bikes with a combined side panel."""
     free_bikes = free_bikes if free_bikes is not None else pd.DataFrame()
     has_stations = not stations.empty
     has_bikes = not free_bikes.empty
+    has_coverage = bool(coverage_geojson)
 
     if not has_stations and not has_bikes:
         st.info("No map data for this snapshot.")
@@ -362,6 +405,12 @@ def render_ops_map(
     stations_layer = None
     bikes_layer = None
     hotspot_layer = None
+    coverage_layer = None
+
+    if has_coverage:
+        coverage_layer = folium.FeatureGroup(name="Coverage (1,000 ft)", show=True)
+        _add_coverage(coverage_layer, coverage_geojson)
+        coverage_layer.add_to(fmap)
 
     if has_stations:
         hotspot_layer = _add_hotspots(stations)
@@ -378,7 +427,9 @@ def render_ops_map(
         bikes_layer.add_to(fmap)
 
     fmap.get_root().header.add_child(Element(PANEL_CSS))
-    fmap.add_child(SidePanel(stations_layer, bikes_layer, hotspot_layer))
+    fmap.add_child(
+        SidePanel(stations_layer, bikes_layer, hotspot_layer, coverage_layer)
+    )
 
     st_folium(fmap, width="100%", height=560, returned_objects=[])
 

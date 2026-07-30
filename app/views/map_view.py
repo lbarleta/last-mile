@@ -21,4 +21,8 @@ def render(metrics_svc: LastMileMetrics) -> None:
         return
 
     st.caption(f"Latest snapshot · {live['timestamp']}")
-    render_ops_map(live["stations"], free_bikes=free_bikes)
+    render_ops_map(
+        live["stations"],
+        free_bikes=free_bikes,
+        coverage_geojson=live.get("coverage_geojson"),
+    )
