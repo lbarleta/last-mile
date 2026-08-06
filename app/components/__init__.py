@@ -6,9 +6,12 @@ import os
 from datetime import datetime
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from LastMile import DEFAULT_DB_PATH, LastMileMetrics
 from LastMile.config import TIMESTAMP_FORMAT
+
+UMAMI_SCRIPT_SRC = "https://cloud.umami.is/script.js"
 
 
 def format_snapshot_date(timestamp: str) -> str:
@@ -37,6 +40,18 @@ def format_hour(hour: int) -> str:
 def resolve_db_path() -> str:
     """DB path from LASTMILE_DB env or project default (not shown in UI)."""
     return os.environ.get("LASTMILE_DB", DEFAULT_DB_PATH)
+
+
+def inject_umami() -> None:
+    """Load Umami when UMAMI_WEBSITE_ID is set (via .env or the environment)."""
+    website_id = os.environ.get("UMAMI_WEBSITE_ID", "").strip()
+    if not website_id:
+        return
+    components.html(
+        f'<script defer src="{UMAMI_SCRIPT_SRC}" '
+        f'data-website-id="{website_id}"></script>',
+        height=0,
+    )
 
 
 def apply_layout_styles() -> None:

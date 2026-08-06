@@ -167,6 +167,9 @@ data/
 # *.csv
 # *.json
 
+# Local env (Umami website ID, etc.) — never commit
+.env.local
+
 # Backup files
 *.bak
 *.backup

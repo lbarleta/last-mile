@@ -12,6 +12,7 @@ from components import (
     apply_layout_styles,
     format_snapshot_date,
     get_metrics,
+    inject_umami,
     resolve_db_path,
 )
 from views import forecast, live_ops, map_view, trends
@@ -23,6 +24,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+inject_umami()
 apply_layout_styles()
 
 db_path = resolve_db_path()
