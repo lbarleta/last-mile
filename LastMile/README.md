@@ -27,7 +27,6 @@ from LastMile import (
     LastMileManager,
     LastMileMetrics,
     LastMileUtils,
-    DEFAULT_DB_PATH,
     DEFAULT_FEEDS_URL,
     DEFAULT_LANG,
     DEFAULT_TIMEZONE,
@@ -43,22 +42,25 @@ from LastMile import (
 
 ### Setup and collection
 
-```python
-from LastMile import LastMileSetup, LastMileManager, DEFAULT_DB_PATH, DEFAULT_FEEDS_URL
+Every class takes an optional `db_path`, a MySQL URL. Leave it out to fall back
+to `LASTMILE_DATABASE_URL`, read from the environment or from `.env`.
 
-with LastMileSetup(feeds_url=DEFAULT_FEEDS_URL, lang="en", db_path=DEFAULT_DB_PATH) as setup:
+```python
+from LastMile import LastMileSetup, LastMileManager, DEFAULT_FEEDS_URL
+
+with LastMileSetup(feeds_url=DEFAULT_FEEDS_URL, lang="en") as setup:
     setup.create_tables()
 
-with LastMileManager(feeds_url=DEFAULT_FEEDS_URL, lang="en", db_path=DEFAULT_DB_PATH) as manager:
+with LastMileManager(feeds_url=DEFAULT_FEEDS_URL, lang="en") as manager:
     manager.update_data()
 ```
 
 ### Metrics
 
 ```python
-from LastMile import LastMileMetrics, DEFAULT_DB_PATH
+from LastMile import LastMileMetrics
 
-with LastMileMetrics(db_path=DEFAULT_DB_PATH) as metrics:
+with LastMileMetrics() as metrics:
     live = metrics.get_live_ops_metrics()          # latest (or chosen) snapshot
     series = metrics.get_availability_timeseries(hours=24 * 7)
     util = metrics.get_bike_utilization(hours=24 * 28)

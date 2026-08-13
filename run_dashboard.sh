@@ -4,14 +4,10 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
-# Project .env (gitignored) supplies LASTMILE_DATABASE_URL and, optionally,
-# UMAMI_WEBSITE_ID.
-if [[ -f "$ROOT/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$ROOT/.env"
-  set +a
-fi
+# .env (gitignored, supplying LASTMILE_DATABASE_URL and optionally
+# UMAMI_WEBSITE_ID) is read by LastMile.config at import. Deliberately not
+# sourced here: a PythonAnywhere database name contains a '$', which the shell
+# would expand away, silently pointing the app at the wrong database.
 exec "$ROOT/.venv/bin/streamlit" run "$ROOT/app/main.py" \
   --server.address "unix://${DOMAIN_SOCKET}" \
   --server.enableCORS false \

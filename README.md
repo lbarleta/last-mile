@@ -9,7 +9,7 @@ Hourly bike-share warehouse and Streamlit dashboard, built on open
 
 ## What it does
 
-The project has two sides that share one SQLite warehouse.
+The project has two sides that share one MySQL warehouse.
 
 **Ingest.** A collector pulls station and free-bike status from the Bay Wheels
 GBFS feed once an hour and appends it to a local database. Station metadata is
@@ -24,7 +24,7 @@ same indicators over time: fleet availability, station failure patterns, and an
 estimate of how many bikes are in use through the day and week.
 
 ```text
-GBFS ──► scripts/collect.py ──► data/lastmile-sf.db ──► Streamlit (read-only)
+GBFS ──► scripts/collect.py ──► MySQL ──► Streamlit (read-only)
 ```
 
 Metric definitions and why particular visualizations were chosen are documented
@@ -36,34 +36,40 @@ in [`NOTES.md`](NOTES.md).
 git clone https://github.com/lbarleta/last-mile.git
 cd last-mile && python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python scripts/collect.py --setup   # first time
+
+cp .env.example .env                # then set LASTMILE_DATABASE_URL
+export LASTMILE_DATABASE_URL='mysql://user:password@host/lastmile'
+
+python scripts/collect.py --setup   # first time: creates tables, loads stations
 python scripts/collect.py           # hourly thereafter
 streamlit run app/main.py
 ```
 
-The warehouse lives at `data/lastmile-sf.db` (gitignored). Override with
-`LASTMILE_DB` if needed.
+`LASTMILE_DATABASE_URL` is required and names a MySQL database. A `.env` at the
+project root is read automatically by both the dashboard and the scripts, and
+real environment variables win over it, so a cron entry needs nothing but the
+interpreter and the script path.
 
 ## Library usage
 
+`db_path` takes a MySQL URL; omit it to use `LASTMILE_DATABASE_URL`.
+
 ```python
-from LastMile import LastMileSetup, LastMileManager, LastMileMetrics, DEFAULT_DB_PATH
+from LastMile import LastMileSetup, LastMileManager, LastMileMetrics
 
 with LastMileSetup(
     feeds_url="https://gbfs.baywheels.com/gbfs/2.3/gbfs.json",
     lang="en",
-    db_path=DEFAULT_DB_PATH,
 ) as setup:
     setup.create_tables()
 
 with LastMileManager(
     feeds_url="https://gbfs.baywheels.com/gbfs/2.3/gbfs.json",
     lang="en",
-    db_path=DEFAULT_DB_PATH,
 ) as manager:
     manager.update_data()
 
-with LastMileMetrics(db_path=DEFAULT_DB_PATH) as metrics:
+with LastMileMetrics() as metrics:
     print(metrics.get_live_ops_metrics())
 ```
 
@@ -77,7 +83,8 @@ last-mile/
   app/               Streamlit dashboard
   scripts/collect.py Hourly GBFS collector
   assets/            SF county boundary for coverage
-  data/              Local SQLite warehouse (gitignored)
+  scripts/migrate_db.py  One-time legacy SQLite -> MySQL load
+  data/              Legacy SQLite file, migration source only (gitignored)
   NOTES.md           Metric definitions and design choices
 ```
 

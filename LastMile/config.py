@@ -1,8 +1,35 @@
 """Default configuration for LastMile."""
 
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def load_dotenv(path: Path) -> None:
+    """
+    Load ``KEY=VALUE`` pairs from a .env file, never overriding real
+    environment variables.
+
+    Values may be quoted. Use single quotes for anything containing a ``$``,
+    such as a PythonAnywhere database name: this parser leaves it alone, but
+    a shell that ``source``s the same file would expand it.
+    """
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key:
+            os.environ.setdefault(key, value.strip().strip("'").strip('"'))
+
+
+# Imported on the way to everything else, so the collector and the other
+# scripts pick up .env without each needing to arrange it.
+load_dotenv(PROJECT_ROOT / ".env")
 
 # Only scripts/migrate_db.py reads this: the one-time source for loading the
 # pre-MySQL history. Nothing in the application opens a SQLite file.
