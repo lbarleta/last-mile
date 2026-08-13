@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Collect an hourly Bay Wheels GBFS snapshot into the local SQLite database.
+"""Collect an hourly Bay Wheels GBFS snapshot into MySQL.
 
 Usage:
     python scripts/collect.py
-    python scripts/collect.py --db data/lastmile-sf.db
+    python scripts/collect.py --db mysql://user:password@host/lastmile
     python scripts/collect.py --setup   # recreate stations table first
 """
 
@@ -18,18 +18,23 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from LastMile import (
-    DEFAULT_DB_PATH,
     DEFAULT_FEEDS_URL,
     DEFAULT_LANG,
     DEFAULT_TIMEZONE,
     LastMileManager,
     LastMileSetup,
 )
+from LastMile.db import connect
+from LastMile.engine import as_url, describe
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LastMile hourly GBFS collector")
-    parser.add_argument("--db", default=DEFAULT_DB_PATH, help="SQLite database path")
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="MySQL URL (default: LASTMILE_DATABASE_URL)",
+    )
     parser.add_argument("--feeds-url", default=DEFAULT_FEEDS_URL)
     parser.add_argument("--lang", default=DEFAULT_LANG)
     parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
@@ -43,24 +48,33 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    db_path = Path(args.db)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    target = as_url(args.db)
 
-    if args.setup or not db_path.exists():
-        print(f"Running setup against {db_path}…")
+    # A database with no stations table has never been set up, so the first run
+    # against a fresh one bootstraps itself without needing --setup.
+    needs_setup = args.setup
+    if not needs_setup:
+        conn = connect(target)
+        try:
+            needs_setup = not conn.has_table("stations")
+        finally:
+            conn.close()
+
+    if needs_setup:
+        print(f"Running setup against {describe(target)}…")
         with LastMileSetup(
-            feeds_url=args.feeds_url, lang=args.lang, db_path=str(db_path)
+            feeds_url=args.feeds_url, lang=args.lang, db_path=target
         ) as setup:
             setup.create_tables(overwrite=args.setup)
             if not setup.verify_setup():
                 print("Setup verification failed")
                 return 1
 
-    print(f"Collecting snapshot into {db_path}…")
+    print(f"Collecting snapshot into {describe(target)}…")
     with LastMileManager(
         feeds_url=args.feeds_url,
         lang=args.lang,
-        db_path=str(db_path),
+        db_path=target,
         timezone=args.timezone,
     ) as manager:
         manager.update_data()

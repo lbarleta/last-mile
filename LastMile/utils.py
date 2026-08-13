@@ -1,336 +1,181 @@
+"""
+GBFS feed client and shared database handle.
+
+Feed parsing normalizes the places where GBFS publishers disagree, so the rest
+of the package sees one consistent shape:
+
+* ``num_ebikes_available`` is a Lyft extension, not part of GBFS. The spec way
+  to count electric bikes is ``vehicle_types_available`` cross-referenced with
+  the ``vehicle_types`` feed, which is what this reads when it is available.
+* ``vehicle_type_id`` is kept as text. Lyft happens to publish ``"1"``/``"2"``
+  but Spin and Bird publish UUIDs.
+* ``is_reserved`` / ``is_disabled`` arrive as integers from Lyft and as real
+  booleans from Spin, and are coerced to 0/1 either way.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Iterable, Optional
+
 import pandas as pd
 import requests
-import sqlite3
-from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any, Tuple
-import os
+
+from .engine import Db, as_url, make_engine
+
+REQUEST_TIMEOUT = 30
+
+# GBFS propulsion types that count as an "e-bike" for the dashboard's purposes.
+ELECTRIC_PROPULSION = {"electric", "electric_assist"}
+
+
+def as_int_flag(value: Any) -> Optional[int]:
+    """GBFS publishers use both 0/1 and true/false for these flags."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class LastMileUtils:
-    """
-    A utility class for common operations in the LastMile system.
-    """
-    
-    def __init__(self, feeds_url: str, lang: str = 'en', db_path: str = 'lastmile.db'):
+    """Feed access plus a connection to the configured database."""
+
+    def __init__(
+        self,
+        feeds_url: str,
+        lang: str = "en",
+        db_path: Optional[str] = None,
+    ):
         """
-        Initialize the LastMileUtils.
-        
         Args:
-            feeds_url (str): URL to the GBFS feed.
-            lang (str): Language code (e.g., 'en', 'es', 'fr').
-            db_path (str): Path to the SQLite database file
+            feeds_url: URL of the GBFS discovery document.
+            lang: Feed language code.
+            db_path: MySQL URL. Defaults to ``LASTMILE_DATABASE_URL``.
         """
         self.db_path = db_path
-        self.conn = self.connect()
+        self.url = as_url(db_path)
+        self.engine = make_engine(self.url)
+        self.conn = Db(self.engine.connect())
         self.feeds_url = feeds_url
         self.lang = lang
         self.feeds = self.get_system_feeds()
+        self._vehicle_types: Optional[pd.DataFrame] = None
 
-    def __del__(self):
-        """Destructor to close the database connection."""
+    def __enter__(self) -> "LastMileUtils":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         self.disconnect()
-        self.conn = None
+        return False
 
-    def get_system_feeds(self) -> Dict[str, Any]:
-        """
-        Get the main GBFS feeds configuration.
-        
-        Returns:
-            Dict containing the feeds configuration
-        """
+    # --- feeds ------------------------------------------------------------
+
+    def get_system_feeds(self) -> list[Dict[str, Any]]:
+        """Feed list from the GBFS discovery document."""
         try:
-            sources = requests.get(self.feeds_url).json()
-            return sources['data'][self.lang]['feeds']
-        except Exception as e:
-            print(f"Error fetching system feeds: {e}")
+            sources = requests.get(self.feeds_url, timeout=REQUEST_TIMEOUT).json()
+        except Exception as exc:
+            print(f"Error fetching system feeds: {exc}")
             raise
+        data = sources["data"]
+        # Single-language feeds sometimes omit the language envelope.
+        block = data.get(self.lang) or next(iter(data.values()))
+        return block["feeds"]
 
     def get_feed_url(self, name: str) -> str:
-        """
-        Get the URL for a given feed.
-        
-        Args:
-            name (str): name of the feed to get the URL for.
-        """
-        
-        try:
-            for feed in self.feeds:
-                if feed['name'] == name:
-                    return feed['url']
-            raise KeyError(f"Feed '{name}' not found in available feeds.")
-        except Exception as e:
-            print(f"Error getting feed URL: {e}")
-            raise
+        for feed in self.feeds:
+            if feed["name"] == name:
+                return feed["url"]
+        raise KeyError(f"Feed '{name}' not found in available feeds.")
 
+    def has_feed(self, name: str) -> bool:
+        return any(feed["name"] == name for feed in self.feeds)
 
     def load_feed_data(self, name: str, key: str) -> pd.DataFrame:
-        """
-        Fetches JSON data from a given URL, extracts a specified section,
-        and returns it as a pandas DataFrame.
-
-        Args:
-            feed (str): name of the feed to load.
-            key (str): Name of the key to retrieve under the feed section (e.g., 'stations').
-
-        Returns:
-            pd.DataFrame: DataFrame containing the extracted data.
-        """
-
+        """Fetch a feed and return the named section as a DataFrame."""
         feed_url = self.get_feed_url(name)
         try:
-            sources = requests.get(feed_url).json()
-            return pd.DataFrame(sources['data'][key])
-        except requests.RequestException as e:
-            print(f"Error fetching data from {feed_url}: {e}")
+            sources = requests.get(feed_url, timeout=REQUEST_TIMEOUT).json()
+            return pd.DataFrame(sources["data"][key])
+        except requests.RequestException as exc:
+            print(f"Error fetching data from {feed_url}: {exc}")
             raise
-        except KeyError as e:
-            print(f"Error parsing JSON data: {e}")
+        except KeyError as exc:
+            print(f"Error parsing JSON data: {exc}")
             raise
-    
-    
-    def connect(self):
-        """Establish database connection."""
-        try:
-            self.conn = sqlite3.connect(self.db_path)
-            print(f"Connected to database: {self.db_path}")
-        except sqlite3.Error as e:
-            print(f"Error connecting to database: {e}")
-            raise
+
+    # --- normalized views -------------------------------------------------
+
+    def vehicle_types(self) -> pd.DataFrame:
+        """
+        The ``vehicle_types`` feed, or an empty frame when unpublished.
+
+        Cached: it changes far more slowly than the hourly status feeds.
+        """
+        if self._vehicle_types is not None:
+            return self._vehicle_types
+        if not self.has_feed("vehicle_types"):
+            self._vehicle_types = pd.DataFrame(
+                columns=[
+                    "vehicle_type_id",
+                    "form_factor",
+                    "propulsion_type",
+                    "max_range_meters",
+                ]
+            )
+            return self._vehicle_types
+        df = self.load_feed_data("vehicle_types", "vehicle_types")
+        for column in ("form_factor", "propulsion_type", "max_range_meters"):
+            if column not in df.columns:
+                df[column] = None
+        df["vehicle_type_id"] = df["vehicle_type_id"].astype(str)
+        self._vehicle_types = df[
+            ["vehicle_type_id", "form_factor", "propulsion_type", "max_range_meters"]
+        ]
+        return self._vehicle_types
+
+    def electric_type_ids(self) -> set[str]:
+        """Vehicle type ids whose propulsion is electric."""
+        types = self.vehicle_types()
+        if types.empty:
+            return set()
+        electric = types[
+            types["propulsion_type"].astype(str).isin(ELECTRIC_PROPULSION)
+        ]
+        return set(electric["vehicle_type_id"].astype(str))
+
+    # --- database ---------------------------------------------------------
+
+    def connect(self) -> Db:
+        if self.conn is None:
+            self.conn = Db(self.engine.connect())
         return self.conn
 
-    
-    def disconnect(self):
-        """Close the database connection."""
-        if self.conn:
+    def disconnect(self) -> None:
+        if self.conn is not None:
             self.conn.close()
-            print("Database connection closed")
-        self.conn = None
-    
-        # def get_table_info(self, table_name: str) -> Dict[str, Any]:
-    #     """
-    #     Get information about a database table.
-        
-    #     Args:
-    #         table_name (str): Name of the table
-            
-    #     Returns:
-    #         Dict containing table information
-    #     """
-    #     try:
-            
-    #         # Get table schema
-    #         cursor = self.conn.cursor()
-    #         cursor.execute(f"PRAGMA table_info({table_name})")
-    #         columns = cursor.fetchall()
-            
-    #         # Get row count
-    #         cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-    #         row_count = cursor.fetchone()[0]
-            
-    #         # Get sample data
-    #         sample_data = self.execute_query(f"SELECT * FROM {table_name} LIMIT 5")
-            
-    #         return {
-    #             'table_name': table_name,
-    #             'columns': [col[1] for col in columns],  # Column names
-    #             'row_count': row_count,
-    #             'sample_data': sample_data
-    #         }
-    #     except Exception as e:
-    #         print(f"Error getting table info for {table_name}: {e}")
-    #         raise
-    
-    # def get_all_tables(self) -> List[str]:
-    #     """
-    #     Get list of all tables in the database.
-        
-    #     Returns:
-    #         List of table names
-    #     """
-    #     try:
-            
-    #         cursor = self.conn.cursor()
-    #         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    #         tables = [row[0] for row in cursor.fetchall()]
-    #         return tables
-    #     except Exception as e:
-    #         print(f"Error getting table list: {e}")
-    #         raise
-    
-    # def clear_table(self, table_name: str):
-    #     """
-    #     Clear all data from a table.
-        
-    #     Args:
-    #         table_name (str): Name of the table to clear
-    #     """
-    #     try:
-            
-    #         cursor = self.conn.cursor()
-    #         cursor.execute(f"DELETE FROM {table_name}")
-    #         self.conn.commit()
-    #         print(f"Table {table_name} cleared successfully")
-    #     except Exception as e:
-    #         print(f"Error clearing table {table_name}: {e}")
-    #         raise
-    
-    # def get_historical_data(self, table_name: str, hours: int = 24, 
-    #                       start_date: Optional[str] = None, end_date: Optional[str] = None) -> pd.DataFrame:
-    #     """
-    #     Get historical data from a table.
-        
-    #     Args:
-    #         table_name (str): Name of the table
-    #         hours (int): Number of hours of historical data
-    #         start_date (str, optional): Start date in 'YYYY-MM-DD' format
-    #         end_date (str, optional): End date in 'YYYY-MM-DD' format
-            
-    #     Returns:
-    #         pd.DataFrame: Historical data
-    #     """
-    #     try:
-            
-    #         if start_date and end_date:
-    #             query = f"""
-    #             SELECT * FROM {table_name} 
-    #             WHERE date(timestamp) BETWEEN '{start_date}' AND '{end_date}'
-    #             ORDER BY timestamp DESC
-    #             """
-    #         else:
-    #             query = f"""
-    #             SELECT * FROM {table_name} 
-    #             WHERE datetime(timestamp) >= datetime('now', '-{hours} hours')
-    #             ORDER BY timestamp DESC
-    #             """
-            
-    #         return self.execute_query(query)
-    #     except Exception as e:
-    #         print(f"Error getting historical data: {e}")
-    #         raise
-    
-    # def get_latest_data(self, table_name: str, limit: int = 100) -> pd.DataFrame:
-    #     """
-    #     Get the latest data from a table.
-        
-    #     Args:
-    #         table_name (str): Name of the table
-    #         limit (int): Maximum number of records to return
-            
-    #     Returns:
-    #         pd.DataFrame: Latest data
-    #     """
-    #     try:
-    #         query = f"SELECT * FROM {table_name} ORDER BY timestamp DESC LIMIT {limit}"
-    #         return self.execute_query(query)
-    #     except Exception as e:
-    #         print(f"Error getting latest data: {e}")
-    #         raise
-    
-    # def backup_database(self, backup_path: Optional[str] = None) -> str:
-    #     """
-    #     Create a backup of the database.
-        
-    #     Args:
-    #         backup_path (str, optional): Path for backup file
-            
-    #     Returns:
-    #         str: Path to backup file
-    #     """
-    #     try:
-    #         if not backup_path:
-    #             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    #             backup_path = f"lastmile_backup_{timestamp}.db"
-            
-    #         # Copy database file
-    #         import shutil
-    #         shutil.copy2(self.db_path, backup_path)
-    #         print(f"Database backed up to: {backup_path}")
-    #         return backup_path
-    #     except Exception as e:
-    #         print(f"Error creating backup: {e}")
-    #         raise
-    
-    # def get_database_stats(self) -> Dict[str, Any]:
-    #     """
-    #     Get database statistics.
-        
-    #     Returns:
-    #         Dict containing database statistics
-    #     """
-    #     try:
-            
-    #         tables = self.get_all_tables()
-    #         stats = {
-    #             'database_path': self.db_path,
-    #             'database_size_mb': os.path.getsize(self.db_path) / (1024 * 1024),
-    #             'tables': {},
-    #             'total_records': 0
-    #         }
-            
-    #         for table in tables:
-    #             table_info = self.get_table_info(table)
-    #             stats['tables'][table] = {
-    #                 'row_count': table_info['row_count'],
-    #                 'columns': table_info['columns']
-    #             }
-    #             stats['total_records'] += table_info['row_count']
-            
-    #         return stats
-    #     except Exception as e:
-    #         print(f"Error getting database stats: {e}")
-    #         raise
-    
-    # def optimize_database(self):
-    #     """
-    #     Optimize the database by running VACUUM and ANALYZE.
-    #     """
-    #     try:
-            
-    #         cursor = self.conn.cursor()
-    #         cursor.execute("VACUUM")
-    #         cursor.execute("ANALYZE")
-    #         self.conn.commit()
-    #         print("Database optimized successfully")
-    #     except Exception as e:
-    #         print(f"Error optimizing database: {e}")
-    #         raise
-    
-    # def get_system_info(self) -> Dict[str, Any]:
-    #     """
-    #     Get system information and configuration.
-        
-    #     Returns:
-    #         Dict containing system information
-    #     """
-    #     try:
-    #         feeds = self.get_system_feeds()
-    #         pricing = requests.get("https://gbfs.lyft.com/gbfs/2.3/bay/en/system_pricing_plans.json").json()
-            
-    #         system_info = {
-    #             'feeds': feeds,
-    #             'pricing_plans': pricing['data']['plans'],
-    #             'database_path': self.db_path,
-    #             'setup_timestamp': datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
-    #         }
-            
-    #         return system_info
-    #     except Exception as e:
-    #         print(f"Error getting system info: {e}")
-    #         raise
+            self.conn = None
 
 
-# # Example usage
-# if __name__ == "__main__":
-#     # feeds url and language
-#     url = 'https://gbfs.lyft.com/gbfs/2.3/bay/en/system_feeds.json'
-#     lang = 'en'
-    
-#     # Utilities example
-#     with LastMileUtils() as utils:
-#         # Get system feeds
-#         feeds = utils.get_system_feeds(url, lang)
-#         print(f"System feeds: {len(feeds)} available")
-        
-#         # Get database stats
-#         stats = utils.get_database_stats()
-#         print(f"Database has {stats['total_records']} total records")
+def count_electric(
+    vehicle_types_available: Any, electric_ids: Iterable[str]
+) -> Optional[int]:
+    """
+    Electric count from a GBFS ``vehicle_types_available`` array.
+
+    Returns ``None`` when the field is absent, so callers can fall back to a
+    publisher extension rather than recording a spurious zero.
+    """
+    if not isinstance(vehicle_types_available, (list, tuple)):
+        return None
+    electric = set(electric_ids)
+    total = 0
+    for entry in vehicle_types_available:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("vehicle_type_id")) in electric:
+            total += int(entry.get("count") or 0)
+    return total

@@ -20,7 +20,6 @@ baseline in backtests.
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -33,7 +32,7 @@ from .config import (
     FORECAST_LAG_HOURS,
     TIMESTAMP_FORMAT,
 )
-from . import db as queries
+from .engine import Db, key_expr, to_dt
 from . import weather as weather_mod
 
 WEATHER_FEATURES = ("temp_c", "precip_mm", "wind_kph", "humidity_pct", "cloud_pct")
@@ -73,13 +72,13 @@ class StationPanel:
 
 
 def load_panel(
-    conn: sqlite3.Connection,
+    conn: Db,
     since: Optional[str] = None,
     until: Optional[str] = None,
     extend_hours: int = 0,
 ) -> StationPanel:
     """
-    Read snapshots into a dense hourly grid, deduplicating station-hours.
+    Read snapshots into a dense hourly grid.
 
     ``extend_hours`` appends future hours with no occupancy data but valid
     calendar and weather context, which is what scoring beyond the last
@@ -87,29 +86,26 @@ def load_panel(
     """
     clauses, params = [], []
     if since is not None:
-        clauses.append("timestamp >= ?")
-        params.append(since)
+        clauses.append("ts >= ?")
+        params.append(to_dt(since))
     if until is not None:
-        clauses.append("timestamp <= ?")
-        params.append(until)
+        clauses.append("ts <= ?")
+        params.append(to_dt(until))
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-    status = pd.read_sql_query(
+    key = key_expr("ts")
+    status = conn.read_sql(
         f"""
-        SELECT station_id, timestamp,
+        SELECT station_id, {key} AS timestamp,
                num_bikes_available, num_docks_available, num_ebikes_available
         FROM station_status
         {where}
         """,
-        conn,
-        params=params,
+        params,
     )
     if status.empty:
         raise ValueError("No station_status rows in the requested window")
 
-    # The collector appends without a uniqueness constraint, so retries and the
-    # DST fall-back hour can produce repeated station-hours.
-    status = status.drop_duplicates(subset=["station_id", "timestamp"], keep="last")
     status["station_id"] = status["station_id"].astype(str)
 
     observed = pd.to_datetime(status["timestamp"], format=TIMESTAMP_FORMAT)
@@ -161,17 +157,15 @@ def load_panel(
     )
 
 
-def _load_station_metadata(conn: sqlite3.Connection) -> pd.DataFrame:
-    name_col = queries._station_name_expr(conn)
-    stations = pd.read_sql_query(
-        f"""
+def _load_station_metadata(conn: Db) -> pd.DataFrame:
+    stations = conn.read_sql(
+        """
         SELECT s.station_id,
-               {name_col} AS name,
+               s.name AS name,
                COALESCE(s.region, 'Unknown') AS region,
                s.capacity, s.lat, s.lon
         FROM stations s
-        """,
-        conn,
+        """
     )
     stations["station_id"] = stations["station_id"].astype(str)
     stations = stations.drop_duplicates(subset=["station_id"]).sort_values("station_id")

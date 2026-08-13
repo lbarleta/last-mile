@@ -1,136 +1,142 @@
-"""Read-only SQLite query helpers for the LastMile dashboard."""
+"""
+Read-only query helpers for the LastMile dashboard.
+
+Runs against MySQL through :mod:`LastMile.engine`. Snapshot hours are stored as
+a real ``ts`` column but cross this module's public API as
+``YYYY-MM-DD-HH:00`` strings, which is what the app, its cache keys, and the
+metric layer already speak.
+
+``station_status`` is now keyed on ``(station_id, ts)``, so a snapshot hour
+holds exactly one row per station. The aggregate queries used to defend against
+duplicates with an inner ``GROUP BY``/``MAX`` pass; that is no longer needed and
+the queries are correspondingly cheaper.
+"""
 
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Dict, Optional
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from .config import (
-    DEFAULT_DB_PATH,
-    DEFAULT_TIMEZONE,
     BACKUP_STATION_RADIUS_M,
+    DEFAULT_TIMEZONE,
     LOW_STATION_BIKE_SHARE,
     OPS_DAY_HOUR_END,
     OPS_DAY_HOUR_START,
     PROBLEMATIC_LOOKBACK_HOURS,
     TIMESTAMP_FORMAT,
 )
-
+from .engine import (
+    Db,
+    as_url,
+    date_expr,
+    hour_expr,
+    hour_label_expr,
+    key_expr,
+    make_engine,
+    real_cast,
+    to_dt,
+    to_key,
+)
+from .schema import ensure_indexes as _ensure_indexes
 
 # Free-floating bikes have coordinates but no region, and are overwhelmingly
 # concentrated in San Francisco, so they are all attributed there.
 FREE_FLOATING_REGION = "San Francisco"
 
-# Four mutually exclusive station states, ordered so they sum to the station
-# count: a station with neither bikes nor docks is counted empty, not both.
-_STATUS_COUNT_SQL = f"""
-            SUM(CASE WHEN num_bikes_available = 0 THEN 1 ELSE 0 END)
+
+def _status_counts(prefix: str = "") -> str:
+    """
+    Four mutually exclusive station states.
+
+    Ordered so they sum to the station count: a station with neither bikes nor
+    docks is counted empty, not both.
+    """
+    bikes = f"{prefix}num_bikes_available"
+    docks = f"{prefix}num_docks_available"
+    share = real_cast(bikes)
+    return f"""
+            SUM(CASE WHEN {bikes} = 0 THEN 1 ELSE 0 END)
                 AS empty_stations,
-            SUM(CASE WHEN num_bikes_available > 0 AND num_docks_available = 0
+            SUM(CASE WHEN {bikes} > 0 AND {docks} = 0
                      THEN 1 ELSE 0 END) AS full_stations,
-            SUM(CASE WHEN num_bikes_available > 0 AND num_docks_available > 0
-                      AND CAST(num_bikes_available AS REAL)
-                          / (num_bikes_available + num_docks_available)
+            SUM(CASE WHEN {bikes} > 0 AND {docks} > 0
+                      AND {share} / ({bikes} + {docks})
                           < {LOW_STATION_BIKE_SHARE}
                      THEN 1 ELSE 0 END) AS low_stations,
-            SUM(CASE WHEN num_bikes_available > 0 AND num_docks_available > 0
-                      AND CAST(num_bikes_available AS REAL)
-                          / (num_bikes_available + num_docks_available)
+            SUM(CASE WHEN {bikes} > 0 AND {docks} > 0
+                      AND {share} / ({bikes} + {docks})
                           >= {LOW_STATION_BIKE_SHARE}
                      THEN 1 ELSE 0 END) AS healthy_stations"""
 
 
-def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    """Open a read-oriented SQLite connection."""
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+def connect(db_path: Optional[str] = None) -> Db:
+    """Open a connection to the configured database, or to an explicit URL."""
+    return Db(make_engine(as_url(db_path)).connect())
 
 
-def ensure_indexes(conn: sqlite3.Connection) -> None:
+def ensure_indexes(conn: Db) -> None:
     """Create indexes used by dashboard historical queries."""
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_station_status_ts "
-        "ON station_status(timestamp)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_station_status_station_ts "
-        "ON station_status(station_id, timestamp)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bike_status_ts ON bike_status(timestamp)"
-    )
-    conn.commit()
+    _ensure_indexes(conn)
 
 
-def list_regions(conn: sqlite3.Connection) -> list[str]:
+def list_regions(conn: Db) -> list[str]:
     """Distinct station regions, most stations first."""
-    rows = conn.execute(
+    rows = conn.fetchall(
         """
         SELECT COALESCE(region, 'Unknown') AS region, COUNT(*) AS n
         FROM stations
         GROUP BY region
         ORDER BY n DESC
         """
-    ).fetchall()
+    )
     return [row[0] for row in rows if row[0]]
 
 
-def _station_name_expr(conn: sqlite3.Connection) -> str:
-    """Support legacy `name_x` column and corrected `name` column."""
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(stations)")}
-    if "name" in cols:
-        return "s.name"
-    if "name_x" in cols:
-        return "s.name_x"
-    return "s.station_id"
+def get_latest_timestamp(conn: Db) -> Optional[str]:
+    row = conn.fetchone("SELECT MAX(ts) FROM station_status")
+    return to_key(row[0]) if row and row[0] is not None else None
 
 
-def get_latest_timestamp(conn: sqlite3.Connection) -> Optional[str]:
-    row = conn.execute("SELECT MAX(timestamp) FROM station_status").fetchone()
-    return row[0] if row and row[0] is not None else None
-
-
-def get_timestamp_bounds(conn: sqlite3.Connection) -> tuple[Optional[str], Optional[str]]:
-    row = conn.execute(
-        "SELECT MIN(timestamp), MAX(timestamp) FROM station_status"
-    ).fetchone()
+def get_timestamp_bounds(conn: Db) -> tuple[Optional[str], Optional[str]]:
+    row = conn.fetchone("SELECT MIN(ts), MAX(ts) FROM station_status")
     if not row:
         return None, None
-    return row[0], row[1]
+    return to_key(row[0]), to_key(row[1])
 
 
-def list_snapshot_dates(conn: sqlite3.Connection) -> list[str]:
+def list_snapshot_dates(conn: Db) -> list[str]:
     """Distinct calendar dates (YYYY-MM-DD) that have station_status snapshots."""
-    rows = conn.execute(
-        """
-        SELECT DISTINCT substr(timestamp, 1, 10) AS d
+    day = date_expr("ts")
+    rows = conn.fetchall(
+        f"""
+        SELECT DISTINCT {day} AS d
         FROM station_status
         ORDER BY d
         """
-    ).fetchall()
+    )
     return [row[0] for row in rows if row[0]]
 
 
-def list_snapshot_hours_for_date(conn: sqlite3.Connection, date_str: str) -> list[str]:
+def list_snapshot_hours_for_date(conn: Db, date_str: str) -> list[str]:
     """
     Hours available for a calendar date.
 
-    Returns hour labels like '15:00' for timestamps matching YYYY-MM-DD-HH:00.
+    Returns hour labels like '15:00'.
     """
-    rows = conn.execute(
-        """
-        SELECT DISTINCT substr(timestamp, 12, 5) AS h
+    label = hour_label_expr("ts")
+    day = date_expr("ts")
+    rows = conn.fetchall(
+        f"""
+        SELECT DISTINCT {label} AS h
         FROM station_status
-        WHERE substr(timestamp, 1, 10) = ?
+        WHERE {day} = ?
         ORDER BY h
         """,
         (date_str,),
-    ).fetchall()
+    )
     return [row[0] for row in rows if row[0]]
 
 
@@ -144,22 +150,18 @@ def cutoff_timestamp(
         return None
     if latest is None:
         raise ValueError("latest timestamp required when filtering by hours")
-    dt = datetime.strptime(latest, TIMESTAMP_FORMAT).replace(
-        tzinfo=ZoneInfo(timezone)
-    )
-    start = dt - timedelta(hours=hours)
+    start = to_dt(latest) - timedelta(hours=hours)
     return start.strftime(TIMESTAMP_FORMAT)
 
 
-def get_station_snapshot_at(
-    conn: sqlite3.Connection, timestamp: str
-) -> pd.DataFrame:
+def get_station_snapshot_at(conn: Db, timestamp: str) -> pd.DataFrame:
     """Stations joined with station_status for a specific hourly timestamp."""
-    name_col = _station_name_expr(conn)
-    query = f"""
+    key = key_expr("st.ts")
+    return conn.read_sql(
+        f"""
         SELECT
             s.station_id,
-            {name_col} AS name,
+            s.name,
             s.short_name,
             s.region_id,
             s.capacity,
@@ -171,16 +173,19 @@ def get_station_snapshot_at(
             st.num_ebikes_available,
             st.num_docks_disabled,
             st.num_bikes_disabled,
-            st.timestamp
+            st.is_renting,
+            st.is_installed,
+            {key} AS timestamp
         FROM stations s
         INNER JOIN station_status st
             ON s.station_id = st.station_id
-        WHERE st.timestamp = ?
-    """
-    return pd.read_sql_query(query, conn, params=(timestamp,))
+        WHERE st.ts = ?
+        """,
+        (to_dt(timestamp),),
+    )
 
 
-def get_latest_station_snapshot(conn: sqlite3.Connection) -> pd.DataFrame:
+def get_latest_station_snapshot(conn: Db) -> pd.DataFrame:
     """Stations joined with the most recent station_status row."""
     latest = get_latest_timestamp(conn)
     if latest is None:
@@ -190,8 +195,7 @@ def get_latest_station_snapshot(conn: sqlite3.Connection) -> pd.DataFrame:
 
 def previous_hour_timestamp(timestamp: str) -> str:
     """Return the previous hourly snapshot key for a timestamp string."""
-    dt = datetime.strptime(timestamp, TIMESTAMP_FORMAT) - timedelta(hours=1)
-    return dt.strftime(TIMESTAMP_FORMAT)
+    return (to_dt(timestamp) - timedelta(hours=1)).strftime(TIMESTAMP_FORMAT)
 
 
 def is_ops_day_hour(timestamp: str) -> bool:
@@ -200,9 +204,11 @@ def is_ops_day_hour(timestamp: str) -> bool:
     return OPS_DAY_HOUR_START <= hour <= OPS_DAY_HOUR_END
 
 
-def lookback_timestamps(timestamp: str, hours: int = PROBLEMATIC_LOOKBACK_HOURS) -> list[str]:
+def lookback_timestamps(
+    timestamp: str, hours: int = PROBLEMATIC_LOOKBACK_HOURS
+) -> list[str]:
     """Selected hour plus the previous ``hours - 1`` hourly keys."""
-    end = datetime.strptime(timestamp, TIMESTAMP_FORMAT)
+    end = to_dt(timestamp)
     return [
         (end - timedelta(hours=offset)).strftime(TIMESTAMP_FORMAT)
         for offset in range(hours)
@@ -210,7 +216,7 @@ def lookback_timestamps(timestamp: str, hours: int = PROBLEMATIC_LOOKBACK_HOURS)
 
 
 def get_problematic_stations(
-    conn: sqlite3.Connection,
+    conn: Db,
     timestamp: str,
     *,
     lookback_hours: int = PROBLEMATIC_LOOKBACK_HOURS,
@@ -241,12 +247,12 @@ def get_problematic_stations(
     if not day_hours:
         return pd.DataFrame(columns=empty_cols)
 
-    name_col = _station_name_expr(conn)
     placeholders = ",".join("?" * len(day_hours))
-    query = f"""
+    df = conn.read_sql(
+        f"""
         SELECT
             s.station_id,
-            {name_col} AS name,
+            s.name AS name,
             COALESCE(s.region, 'Unknown') AS region,
             SUM(
                 CASE
@@ -264,12 +270,19 @@ def get_problematic_stations(
         FROM station_status st
         INNER JOIN stations s
             ON s.station_id = st.station_id
-        WHERE st.timestamp IN ({placeholders})
-        GROUP BY s.station_id, {name_col}, COALESCE(s.region, 'Unknown')
-        HAVING hours_problematic > 0
+        WHERE st.ts IN ({placeholders})
+        GROUP BY s.station_id, s.name, COALESCE(s.region, 'Unknown')
+        HAVING SUM(
+            CASE
+                WHEN st.num_bikes_available = 0
+                  OR st.num_docks_available = 0
+                THEN 1 ELSE 0
+            END
+        ) > 0
         ORDER BY hours_problematic DESC, name ASC
-    """
-    df = pd.read_sql_query(query, conn, params=tuple(day_hours))
+        """,
+        tuple(to_dt(ts) for ts in day_hours),
+    )
     if df.empty:
         return pd.DataFrame(columns=empty_cols)
 
@@ -308,7 +321,7 @@ def _haversine_m(
 
 
 def _attach_backup_stations(
-    conn: sqlite3.Connection,
+    conn: Db,
     problematic: pd.DataFrame,
     timestamp: str,
     backup_radius_m: float,
@@ -375,12 +388,12 @@ def _attach_backup_stations(
 
 
 def get_free_bike_counts(
-    conn: sqlite3.Connection,
+    conn: Db,
     timestamp: str,
     low_range_meters: int = 5000,
 ) -> Dict[str, int]:
     """Counts from free_bike_status / bike_status for a snapshot hour."""
-    row = conn.execute(
+    row = conn.fetchone(
         """
         SELECT
             COUNT(*) AS total,
@@ -394,10 +407,10 @@ def get_free_bike_counts(
                 END
             ) AS low_range
         FROM bike_status
-        WHERE timestamp = ?
+        WHERE ts = ?
         """,
-        (low_range_meters, timestamp),
-    ).fetchone()
+        (low_range_meters, to_dt(timestamp)),
+    )
     if not row:
         return {"total": 0, "disabled": 0, "reserved": 0, "low_range": 0}
     return {
@@ -409,17 +422,18 @@ def get_free_bike_counts(
 
 
 def get_free_bike_snapshot(
-    conn: sqlite3.Connection, timestamp: Optional[str] = None
+    conn: Db, timestamp: Optional[str] = None
 ) -> pd.DataFrame:
     """Free-range bike locations for a snapshot hour (defaults to latest)."""
     if timestamp is None:
-        row = conn.execute("SELECT MAX(timestamp) FROM bike_status").fetchone()
-        timestamp = row[0] if row else None
+        row = conn.fetchone("SELECT MAX(ts) FROM bike_status")
+        timestamp = to_key(row[0]) if row and row[0] is not None else None
     if timestamp is None:
         return pd.DataFrame()
 
-    return pd.read_sql_query(
-        """
+    key = key_expr("ts")
+    return conn.read_sql(
+        f"""
         SELECT
             bike_id,
             lat,
@@ -428,17 +442,38 @@ def get_free_bike_snapshot(
             is_disabled,
             vehicle_type_id,
             current_range_meters,
-            timestamp
+            {key} AS timestamp
         FROM bike_status
-        WHERE timestamp = ?
+        WHERE ts = ?
         """,
-        conn,
-        params=(timestamp,),
+        (to_dt(timestamp),),
     )
 
 
+def _time_filters(
+    conn: Db,
+    column: str,
+    since: Optional[str],
+    until: Optional[str],
+    hour_of_day: Optional[str],
+) -> tuple[list[str], list]:
+    """Shared WHERE fragments for the history queries."""
+    clauses: list[str] = []
+    params: list = []
+    if since is not None:
+        clauses.append(f"{column} >= ?")
+        params.append(to_dt(since))
+    if until is not None:
+        clauses.append(f"{column} <= ?")
+        params.append(to_dt(until))
+    if hour_of_day is not None:
+        clauses.append(f"{hour_expr(column)} = ?")
+        params.append(str(hour_of_day).zfill(2))
+    return clauses, params
+
+
 def get_availability_timeseries(
-    conn: sqlite3.Connection,
+    conn: Db,
     since: Optional[str] = None,
     region: Optional[str] = None,
     until: Optional[str] = None,
@@ -451,49 +486,30 @@ def get_availability_timeseries(
     count is the difference; reporting both alongside the total would double
     count. ``bikes_available`` stays the docked total for existing callers.
     """
-    clauses = []
-    params: list = []
-    if since is not None:
-        clauses.append("st.timestamp >= ?")
-        params.append(since)
-    if until is not None:
-        clauses.append("st.timestamp <= ?")
-        params.append(until)
-    if hour_of_day is not None:
-        clauses.append("substr(st.timestamp, 12, 2) = ?")
-        params.append(hour_of_day)
+    clauses, params = _time_filters(conn, "st.ts", since, until, hour_of_day)
     if region is not None:
         clauses.append("COALESCE(s.region, 'Unknown') = ?")
         params.append(region)
-
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    # Join and deduplicate unconditionally: the collector appends without a
-    # uniqueness constraint, so an unjoined COUNT(*) overstates the fleet and
-    # would not equal the sum of the regions.
-    query = f"""
+
+    key = key_expr("st.ts")
+    df = conn.read_sql(
+        f"""
         SELECT
-            timestamp,
-            SUM(num_bikes_available) AS bikes_available,
-            SUM(num_ebikes_available) AS ebikes_available,
-            SUM(num_docks_available) AS docks_available,
-            {_STATUS_COUNT_SQL},
+            {key} AS timestamp,
+            SUM(st.num_bikes_available) AS bikes_available,
+            SUM(st.num_ebikes_available) AS ebikes_available,
+            SUM(st.num_docks_available) AS docks_available,
+            {_status_counts("st.")},
             COUNT(*) AS station_count
-        FROM (
-            SELECT
-                st.timestamp AS timestamp,
-                st.station_id AS station_id,
-                MAX(st.num_bikes_available) AS num_bikes_available,
-                MAX(st.num_ebikes_available) AS num_ebikes_available,
-                MAX(st.num_docks_available) AS num_docks_available
-            FROM station_status st
-            INNER JOIN stations s ON s.station_id = st.station_id
-            {where}
-            GROUP BY st.timestamp, st.station_id
-        )
-        GROUP BY timestamp
-        ORDER BY timestamp
-    """
-    df = pd.read_sql_query(query, conn, params=params)
+        FROM station_status st
+        INNER JOIN stations s ON s.station_id = st.station_id
+        {where}
+        GROUP BY st.ts
+        ORDER BY st.ts
+        """,
+        params,
+    )
     if df.empty:
         return df
     df["classic_available"] = (
@@ -503,7 +519,7 @@ def get_availability_timeseries(
 
 
 def get_free_bike_timeseries(
-    conn: sqlite3.Connection,
+    conn: Db,
     since: Optional[str] = None,
     region: Optional[str] = None,
     until: Optional[str] = None,
@@ -519,40 +535,29 @@ def get_free_bike_timeseries(
     if region is not None and region != FREE_FLOATING_REGION:
         return pd.DataFrame(columns=["timestamp", "free_floating"])
 
-    clauses = []
-    params: list = []
-    if since is not None:
-        clauses.append("timestamp >= ?")
-        params.append(since)
-    if until is not None:
-        clauses.append("timestamp <= ?")
-        params.append(until)
-    if hour_of_day is not None:
-        clauses.append("substr(timestamp, 12, 2) = ?")
-        params.append(hour_of_day)
+    clauses, params = _time_filters(conn, "ts", since, until, hour_of_day)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-    return pd.read_sql_query(
+    key = key_expr("ts")
+    return conn.read_sql(
         f"""
-        SELECT timestamp, COUNT(*) AS free_floating
+        SELECT {key} AS timestamp, COUNT(*) AS free_floating
         FROM bike_status
         {where}
-        GROUP BY timestamp
-        ORDER BY timestamp
+        GROUP BY ts
+        ORDER BY ts
         """,
-        conn,
-        params=params,
+        params,
     )
 
 
 def _shift_timestamp(timestamp: str, hours: int) -> str:
     """Shift a snapshot key by a whole number of hours."""
-    dt = datetime.strptime(timestamp, TIMESTAMP_FORMAT) + timedelta(hours=hours)
-    return dt.strftime(TIMESTAMP_FORMAT)
+    return (to_dt(timestamp) + timedelta(hours=hours)).strftime(TIMESTAMP_FORMAT)
 
 
 def get_problematic_timeseries(
-    conn: sqlite3.Connection,
+    conn: Db,
     since: Optional[str] = None,
     region: Optional[str] = None,
     lookback_hours: int = PROBLEMATIC_LOOKBACK_HOURS,
@@ -568,30 +573,29 @@ def get_problematic_timeseries(
     pad_since = (
         _shift_timestamp(since, -(lookback_hours - 1)) if since is not None else None
     )
-    clauses = []
+    clauses: list[str] = []
     params: list = []
     if pad_since is not None:
-        clauses.append("st.timestamp >= ?")
-        params.append(pad_since)
+        clauses.append("st.ts >= ?")
+        params.append(to_dt(pad_since))
     if region is not None:
         clauses.append("COALESCE(s.region, 'Unknown') = ?")
         params.append(region)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-    flags = pd.read_sql_query(
+    key = key_expr("st.ts")
+    flags = conn.read_sql(
         f"""
         SELECT
-            st.timestamp AS timestamp,
+            {key} AS timestamp,
             st.station_id AS station_id,
-            CASE WHEN MAX(st.num_bikes_available) = 0 THEN 1 ELSE 0 END AS is_empty,
-            CASE WHEN MAX(st.num_docks_available) = 0 THEN 1 ELSE 0 END AS is_full
+            CASE WHEN st.num_bikes_available = 0 THEN 1 ELSE 0 END AS is_empty,
+            CASE WHEN st.num_docks_available = 0 THEN 1 ELSE 0 END AS is_full
         FROM station_status st
         INNER JOIN stations s ON s.station_id = st.station_id
         {where}
-        GROUP BY st.timestamp, st.station_id
         """,
-        conn,
-        params=params,
+        params,
     )
     empty = pd.DataFrame(
         columns=["timestamp", "empty_stations", "full_stations", "station_count"]
@@ -631,7 +635,7 @@ def get_problematic_timeseries(
 
 
 def get_station_reliability(
-    conn: sqlite3.Connection,
+    conn: Db,
     since: Optional[str] = None,
     region: Optional[str] = None,
     min_hours: int = 24,
@@ -642,45 +646,38 @@ def get_station_reliability(
     Empty takes precedence over full for the rare hour with neither bikes nor
     docks, matching how the states are counted everywhere else.
     """
-    name_col = _station_name_expr(conn)
-    clauses = []
+    clauses: list[str] = []
     params: list = []
     if since is not None:
-        clauses.append("st.timestamp >= ?")
-        params.append(since)
+        clauses.append("st.ts >= ?")
+        params.append(to_dt(since))
     if region is not None:
         clauses.append("COALESCE(s.region, 'Unknown') = ?")
         params.append(region)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(min_hours)
 
-    query = f"""
+    df = conn.read_sql(
+        f"""
         SELECT
-            station_id,
-            name,
-            region,
-            capacity,
+            st.station_id AS station_id,
+            s.name AS name,
+            COALESCE(s.region, 'Unknown') AS region,
+            s.capacity AS capacity,
             COUNT(*) AS hours,
-            SUM(CASE WHEN b = 0 THEN 1 ELSE 0 END) AS hours_empty,
-            SUM(CASE WHEN b > 0 AND d = 0 THEN 1 ELSE 0 END) AS hours_full
-        FROM (
-            SELECT
-                st.station_id AS station_id,
-                {name_col} AS name,
-                COALESCE(s.region, 'Unknown') AS region,
-                s.capacity AS capacity,
-                st.timestamp AS timestamp,
-                MAX(st.num_bikes_available) AS b,
-                MAX(st.num_docks_available) AS d
-            FROM station_status st
-            INNER JOIN stations s ON s.station_id = st.station_id
-            {where}
-            GROUP BY st.timestamp, st.station_id
-        )
-        GROUP BY station_id, name, region, capacity
-        HAVING hours >= ?
-    """
-    df = pd.read_sql_query(query, conn, params=params)
+            SUM(CASE WHEN st.num_bikes_available = 0 THEN 1 ELSE 0 END)
+                AS hours_empty,
+            SUM(CASE WHEN st.num_bikes_available > 0
+                      AND st.num_docks_available = 0
+                     THEN 1 ELSE 0 END) AS hours_full
+        FROM station_status st
+        INNER JOIN stations s ON s.station_id = st.station_id
+        {where}
+        GROUP BY st.station_id, s.name, COALESCE(s.region, 'Unknown'), s.capacity
+        HAVING COUNT(*) >= ?
+        """,
+        params,
+    )
     if df.empty:
         return df
     df["pct_empty"] = df["hours_empty"] / df["hours"] * 100.0

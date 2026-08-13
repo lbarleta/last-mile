@@ -17,14 +17,18 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from LastMile import DEFAULT_DB_PATH
 from LastMile import weather as weather_mod
 from LastMile.db import connect, get_timestamp_bounds
+from LastMile.engine import as_url, describe
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LastMile weather backfill")
-    parser.add_argument("--db", default=DEFAULT_DB_PATH, help="SQLite database path")
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="MySQL URL (default: LASTMILE_DATABASE_URL)",
+    )
     parser.add_argument("--start", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", help="End date (YYYY-MM-DD)")
     parser.add_argument(
@@ -49,12 +53,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    db_path = Path(args.db)
-    if not db_path.exists():
-        print(f"Database not found: {db_path}")
-        return 1
+    url = as_url(args.db)
 
-    conn = connect(str(db_path))
+    print(f"Using {describe(url)}")
+    conn = connect(url)
     try:
         weather_mod.ensure_weather_table(conn)
 

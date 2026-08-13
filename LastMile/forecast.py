@@ -22,7 +22,8 @@ rolling-origin splits:
 
 from __future__ import annotations
 
-import sqlite3
+from .engine import Db, key_expr, to_dt, to_key
+from .schema import create_statements, ensure_indexes
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Sequence
@@ -145,7 +146,7 @@ def _apply_persistence(
 
 
 def train(
-    conn: sqlite3.Connection,
+    conn: Db,
     *,
     train_days: Optional[int] = FORECAST_TRAIN_DAYS,
     horizons: Sequence[int] = FORECAST_HORIZONS,
@@ -243,7 +244,7 @@ def predict(bundle: ForecastBundle, frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def score_origin(
-    conn: sqlite3.Connection,
+    conn: Db,
     bundle: ForecastBundle,
     *,
     origin_timestamp: Optional[str] = None,
@@ -337,7 +338,7 @@ def _calibration_rows(
 
 
 def backtest(
-    conn: sqlite3.Connection,
+    conn: Db,
     *,
     n_folds: int = 4,
     fold_days: int = 7,
@@ -482,62 +483,15 @@ def backtest(
 # --- storage --------------------------------------------------------------
 
 
-def ensure_forecast_tables(conn: sqlite3.Connection) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS forecast_stockout (
-            origin_timestamp TEXT NOT NULL,
-            target_timestamp TEXT NOT NULL,
-            horizon INTEGER NOT NULL,
-            station_id TEXT NOT NULL,
-            p_empty REAL,
-            p_full REAL,
-            bikes_now REAL,
-            docks_now REAL,
-            model_version TEXT,
-            created_at TEXT,
-            PRIMARY KEY (origin_timestamp, station_id, horizon)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_forecast_origin
-            ON forecast_stockout(origin_timestamp);
-
-        CREATE TABLE IF NOT EXISTS forecast_metrics (
-            model_version TEXT NOT NULL,
-            created_at TEXT,
-            fold INTEGER,
-            fold_start TEXT,
-            fold_end TEXT,
-            target TEXT,
-            model TEXT,
-            horizon INTEGER,
-            n_obs INTEGER,
-            base_rate REAL,
-            brier REAL,
-            log_loss REAL,
-            avg_precision REAL,
-            roc_auc REAL
-        );
-
-        CREATE TABLE IF NOT EXISTS forecast_calibration (
-            model_version TEXT NOT NULL,
-            created_at TEXT,
-            target TEXT,
-            model TEXT,
-            bin_lower REAL,
-            bin_upper REAL,
-            n_obs INTEGER,
-            mean_predicted REAL,
-            observed_rate REAL
-        );
-        """
-    )
+def ensure_forecast_tables(conn: Db) -> None:
+    for statement in create_statements():
+        if "CREATE TABLE IF NOT EXISTS forecast_" in statement:
+            conn.execute(statement)
     conn.commit()
+    ensure_indexes(conn)
 
 
-def write_predictions(
-    conn: sqlite3.Connection, scored: pd.DataFrame, model_version: str
-) -> int:
+def write_predictions(conn: Db, scored: pd.DataFrame, model_version: str) -> int:
     """Replace stored predictions for the scored origin hour."""
     if scored.empty:
         return 0
@@ -545,12 +499,13 @@ def write_predictions(
     created_at = datetime.now().isoformat(timespec="seconds")
     origin = scored["origin_timestamp"].iloc[0]
     conn.execute(
-        "DELETE FROM forecast_stockout WHERE origin_timestamp = ?", (origin,)
+        "DELETE FROM forecast_stockout WHERE origin_ts = ?",
+        (to_dt(origin),),
     )
     rows = [
         (
-            row.origin_timestamp,
-            row.target_timestamp,
+            to_dt(row.origin_timestamp),
+            to_dt(row.target_timestamp),
             int(row.horizon),
             row.station_id,
             float(row.p_empty),
@@ -562,21 +517,27 @@ def write_predictions(
         )
         for row in scored.itertuples(index=False)
     ]
-    conn.executemany(
-        """
-        INSERT OR REPLACE INTO forecast_stockout (
-            origin_timestamp, target_timestamp, horizon, station_id,
-            p_empty, p_full, bikes_now, docks_now, model_version, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+    conn.upsert(
+        "forecast_stockout",
+        [
+            "origin_ts", "target_ts", "horizon", "station_id", "p_empty",
+            "p_full", "bikes_now", "docks_now", "model_version", "created_at",
+        ],
         rows,
+        conflict=["origin_ts", "station_id", "horizon"],
     )
     conn.commit()
     return len(rows)
 
 
+def _append(conn: Db, table: str, frame: pd.DataFrame) -> None:
+    columns = list(frame.columns)
+    values = frame.astype(object).where(pd.notna(frame), None)
+    conn.insert_ignore(table, columns, list(values.itertuples(index=False, name=None)))
+
+
 def write_evaluation(
-    conn: sqlite3.Connection,
+    conn: Db,
     metrics: pd.DataFrame,
     calibration: pd.DataFrame,
     model_version: str,
@@ -589,24 +550,24 @@ def write_evaluation(
         "DELETE FROM forecast_calibration WHERE model_version = ?", (model_version,)
     )
     if not metrics.empty:
-        out = metrics.assign(model_version=model_version, created_at=created_at)
-        out.to_sql("forecast_metrics", conn, if_exists="append", index=False)
+        _append(conn, "forecast_metrics", metrics.assign(
+            model_version=model_version, created_at=created_at
+        ))
     if not calibration.empty:
-        out = calibration.assign(model_version=model_version, created_at=created_at)
-        out.to_sql("forecast_calibration", conn, if_exists="append", index=False)
+        _append(conn, "forecast_calibration", calibration.assign(
+            model_version=model_version, created_at=created_at
+        ))
     conn.commit()
 
 
-def latest_forecast_origin(conn: sqlite3.Connection) -> Optional[str]:
+def latest_forecast_origin(conn: Db) -> Optional[str]:
     ensure_forecast_tables(conn)
-    row = conn.execute(
-        "SELECT MAX(origin_timestamp) FROM forecast_stockout"
-    ).fetchone()
-    return row[0] if row and row[0] else None
+    row = conn.fetchone("SELECT MAX(origin_ts) FROM forecast_stockout")
+    return to_key(row[0]) if row and row[0] else None
 
 
 def load_predictions(
-    conn: sqlite3.Connection, origin_timestamp: Optional[str] = None
+    conn: Db, origin_timestamp: Optional[str] = None
 ) -> pd.DataFrame:
     """Stored predictions for one origin hour, joined to station metadata."""
     ensure_forecast_tables(conn)
@@ -614,52 +575,49 @@ def load_predictions(
     if origin is None:
         return pd.DataFrame()
 
-    from . import db as queries
-
-    name_col = queries._station_name_expr(conn)
-    return pd.read_sql_query(
+    origin_key = key_expr("f.origin_ts")
+    target_key = key_expr("f.target_ts")
+    return conn.read_sql(
         f"""
-        SELECT f.origin_timestamp, f.target_timestamp, f.horizon, f.station_id,
+        SELECT {origin_key} AS origin_timestamp,
+               {target_key} AS target_timestamp,
+               f.horizon, f.station_id,
                f.p_empty, f.p_full, f.bikes_now, f.docks_now, f.model_version,
-               {name_col} AS name,
+               s.name AS name,
                COALESCE(s.region, 'Unknown') AS region,
                s.capacity, s.lat, s.lon
         FROM forecast_stockout f
         LEFT JOIN stations s ON s.station_id = f.station_id
-        WHERE f.origin_timestamp = ?
+        WHERE f.origin_ts = ?
         ORDER BY f.horizon, f.station_id
         """,
-        conn,
-        params=(origin,),
+        (to_dt(origin),),
     )
 
 
-def load_metrics(conn: sqlite3.Connection) -> pd.DataFrame:
+def load_metrics(conn: Db) -> pd.DataFrame:
     """Backtest metrics for the most recent evaluated model version."""
     ensure_forecast_tables(conn)
-    row = conn.execute(
+    row = conn.fetchone(
         "SELECT model_version FROM forecast_metrics ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
+    )
     if not row:
         return pd.DataFrame()
-    return pd.read_sql_query(
-        "SELECT * FROM forecast_metrics WHERE model_version = ?",
-        conn,
-        params=(row[0],),
+    return conn.read_sql(
+        "SELECT * FROM forecast_metrics WHERE model_version = ?", (row[0],)
     )
 
 
-def load_calibration(conn: sqlite3.Connection) -> pd.DataFrame:
+def load_calibration(conn: Db) -> pd.DataFrame:
     ensure_forecast_tables(conn)
-    row = conn.execute(
+    row = conn.fetchone(
         "SELECT model_version FROM forecast_calibration "
         "ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
+    )
     if not row:
         return pd.DataFrame()
-    return pd.read_sql_query(
+    return conn.read_sql(
         "SELECT * FROM forecast_calibration WHERE model_version = ? "
         "ORDER BY target, model, bin_lower",
-        conn,
-        params=(row[0],),
+        (row[0],),
     )

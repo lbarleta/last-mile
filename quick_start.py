@@ -1,7 +1,6 @@
 """Smoke-test setup, collection, and metrics against the local warehouse."""
 
 from LastMile import (
-    DEFAULT_DB_PATH,
     LastMileSetup,
     LastMileManager,
     LastMileUtils,
@@ -51,7 +50,7 @@ def main():
 
     url = "https://gbfs.baywheels.com/gbfs/2.3/gbfs.json"
     lang = "en"
-    db_path = DEFAULT_DB_PATH
+    db_path = None  # LASTMILE_DATABASE_URL
     timezone = "America/Los_Angeles"
 
     test_utils(url, lang, db_path)

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import sqlite3
+
+from .engine import Db
 from typing import Any, Dict, Optional
 
 import pandas as pd
 
 from .config import (
-    DEFAULT_DB_PATH,
     DEFAULT_TIMEZONE,
     FLEET_BASELINE_HOURS,
     FORECAST_RISK_THRESHOLD,
@@ -32,13 +32,13 @@ DAY_ORDER = [
 
 
 class LastMileMetrics:
-    """Calculate live-ops and historical metrics from the SQLite database."""
+    """Calculate live-ops and historical metrics from the database."""
 
     def __init__(
         self,
-        db_path: str = DEFAULT_DB_PATH,
+        db_path: Optional[str] = None,
         timezone: str = DEFAULT_TIMEZONE,
-        conn: Optional[sqlite3.Connection] = None,
+        conn: Optional[Db] = None,
     ):
         self.db_path = db_path
         self.timezone = timezone

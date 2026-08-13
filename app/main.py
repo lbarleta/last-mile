@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import path_setup  # noqa: F401
 
 import streamlit as st
@@ -28,10 +26,10 @@ inject_umami()
 apply_layout_styles()
 
 db_path = resolve_db_path()
-if not Path(db_path).exists():
+if db_path is None:
     st.error(
-        "Database not found. Place the warehouse at `data/lastmile-sf.db` "
-        "or set `LASTMILE_DB`."
+        "Set `LASTMILE_DATABASE_URL` to your MySQL database, "
+        "for example `mysql://user:password@host/lastmile`."
     )
     st.stop()
 

@@ -1,4 +1,4 @@
-"""San Francisco hourly weather from Open-Meteo, cached in SQLite.
+"""San Francisco hourly weather from Open-Meteo.
 
 Weather is the strongest exogenous driver of bike-share demand that is not
 already implied by the calendar. Two endpoints are used:
@@ -7,15 +7,13 @@ already implied by the calendar. Two endpoints are used:
 * the forecast endpoint for the recent gap plus the future hours the stockout
   model scores against.
 
-Both are stored in one ``weather`` table keyed by the same local-time hourly
-key used everywhere else (``YYYY-MM-DD-HH:00``), so joins against
-``station_status`` need no timezone handling. Archive rows win over forecast
-rows for the same hour.
+Both are stored in one ``weather`` table on the same local-time hourly grid as
+``station_status``, so joins between them need no timezone handling. Archive
+rows win over forecast rows for the same hour.
 """
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import date, datetime, timedelta
 from typing import Iterable, Optional, Sequence
 from zoneinfo import ZoneInfo
@@ -33,6 +31,8 @@ from .config import (
     TIMESTAMP_FORMAT,
     WEATHER_VARIABLES,
 )
+from .engine import Db, key_expr, to_dt, to_key
+from .schema import create_statements
 
 SOURCE_ARCHIVE = "archive"
 SOURCE_FORECAST = "forecast"
@@ -48,19 +48,12 @@ COLUMN_MAP = {
 WEATHER_COLUMNS = tuple(COLUMN_MAP[name] for name in WEATHER_VARIABLES)
 
 
-def ensure_weather_table(conn: sqlite3.Connection) -> None:
+def ensure_weather_table(conn: Db) -> None:
     """Create the weather cache if it does not exist."""
-    columns = ",\n            ".join(f"{col} REAL" for col in WEATHER_COLUMNS)
-    conn.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS weather (
-            timestamp TEXT PRIMARY KEY,
-            {columns},
-            source TEXT NOT NULL,
-            fetched_at TEXT NOT NULL
-        )
-        """
-    )
+    for statement in create_statements():
+        if "CREATE TABLE IF NOT EXISTS weather" in statement:
+            conn.execute(statement)
+            break
     conn.commit()
 
 
@@ -129,9 +122,7 @@ def fetch_forecast(
     )
 
 
-def upsert_weather(
-    conn: sqlite3.Connection, df: pd.DataFrame, source: str
-) -> int:
+def upsert_weather(conn: Db, df: pd.DataFrame, source: str) -> int:
     """
     Write weather rows, letting archive values overwrite forecast values.
 
@@ -148,9 +139,9 @@ def upsert_weather(
     placeholders = ", ".join("?" * (len(cols) + 3))
     assignments = ", ".join(f"{col} = excluded.{col}" for col in cols)
     sql = f"""
-        INSERT INTO weather (timestamp, {", ".join(cols)}, source, fetched_at)
+        INSERT INTO weather (ts, {", ".join(cols)}, source, fetched_at)
         VALUES ({placeholders})
-        ON CONFLICT(timestamp) DO UPDATE SET
+        ON CONFLICT(ts) DO UPDATE SET
             {assignments},
             source = excluded.source,
             fetched_at = excluded.fetched_at
@@ -158,7 +149,12 @@ def upsert_weather(
            OR weather.source = '{SOURCE_FORECAST}'
     """
     rows = [
-        (row.timestamp, *[getattr(row, col) for col in cols], source, fetched_at)
+        (
+            to_dt(row.timestamp),
+            *[getattr(row, col) for col in cols],
+            source,
+            fetched_at,
+        )
         for row in df.itertuples(index=False)
     ]
     conn.executemany(sql, rows)
@@ -181,7 +177,7 @@ def _date_chunks(
 
 
 def backfill(
-    conn: sqlite3.Connection,
+    conn: Db,
     start_date: str,
     end_date: str,
     *,
@@ -217,7 +213,7 @@ def backfill(
 
 
 def load_weather(
-    conn: sqlite3.Connection,
+    conn: Db,
     since: Optional[str] = None,
     until: Optional[str] = None,
 ) -> pd.DataFrame:
@@ -225,37 +221,37 @@ def load_weather(
     ensure_weather_table(conn)
     clauses, params = [], []
     if since is not None:
-        clauses.append("timestamp >= ?")
-        params.append(since)
+        clauses.append("ts >= ?")
+        params.append(to_dt(since))
     if until is not None:
-        clauses.append("timestamp <= ?")
-        params.append(until)
+        clauses.append("ts <= ?")
+        params.append(to_dt(until))
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    return pd.read_sql_query(
+    key = key_expr("ts")
+    return conn.read_sql(
         f"""
-        SELECT timestamp, {", ".join(WEATHER_COLUMNS)}, source
+        SELECT {key} AS timestamp, {", ".join(WEATHER_COLUMNS)}, source
         FROM weather
         {where}
-        ORDER BY timestamp
+        ORDER BY ts
         """,
-        conn,
-        params=params,
+        params,
     )
 
 
-def coverage_summary(conn: sqlite3.Connection) -> dict:
+def coverage_summary(conn: Db) -> dict:
     """Row counts and bounds, for CLI reporting."""
     ensure_weather_table(conn)
-    row = conn.execute(
+    row = conn.fetchone(
         """
-        SELECT COUNT(*), MIN(timestamp), MAX(timestamp),
+        SELECT COUNT(*), MIN(ts), MAX(ts),
                SUM(CASE WHEN source = 'archive' THEN 1 ELSE 0 END)
         FROM weather
         """
-    ).fetchone()
+    )
     return {
         "hours": int(row[0] or 0),
-        "min_timestamp": row[1],
-        "max_timestamp": row[2],
+        "min_timestamp": to_key(row[1]),
+        "max_timestamp": to_key(row[2]),
         "archive_hours": int(row[3] or 0),
     }

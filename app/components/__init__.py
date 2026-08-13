@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-
 import streamlit as st
 import streamlit.components.v1 as components
 
-from LastMile import DEFAULT_DB_PATH, LastMileMetrics
+from LastMile import LastMileMetrics
 from LastMile.config import TIMESTAMP_FORMAT
+from LastMile.engine import resolve_database_url
 
 UMAMI_SCRIPT_SRC = "https://cloud.umami.is/script.js"
 
@@ -37,9 +37,17 @@ def format_hour(hour: int) -> str:
     return f"{hour % 12 or 12} {suffix}"
 
 
-def resolve_db_path() -> str:
-    """DB path from LASTMILE_DB env or project default (not shown in UI)."""
-    return os.environ.get("LASTMILE_DB", DEFAULT_DB_PATH)
+def resolve_db_path() -> str | None:
+    """
+    Database URL from the environment, or None when it is not configured.
+
+    Anything beyond "is it set" is left to fail at connection time with the
+    server's own message.
+    """
+    try:
+        return resolve_database_url()
+    except RuntimeError:
+        return None
 
 
 def inject_umami() -> None:

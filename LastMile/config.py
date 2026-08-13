@@ -3,7 +3,10 @@
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DB_PATH = str(PROJECT_ROOT / "data" / "lastmile-sf.db")
+
+# Only scripts/migrate_db.py reads this: the one-time source for loading the
+# pre-MySQL history. Nothing in the application opens a SQLite file.
+LEGACY_SQLITE_PATH = str(PROJECT_ROOT / "data" / "lastmile-sf.db")
 DEFAULT_FEEDS_URL = "https://gbfs.baywheels.com/gbfs/2.3/gbfs.json"
 DEFAULT_LANG = "en"
 DEFAULT_TIMEZONE = "America/Los_Angeles"

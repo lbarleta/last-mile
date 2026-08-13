@@ -22,7 +22,6 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd
 
-from LastMile import DEFAULT_DB_PATH
 from LastMile import forecast as fc
 from LastMile.config import (
     FORECAST_MAX_TRAIN_ROWS,
@@ -30,11 +29,16 @@ from LastMile.config import (
     FORECAST_TRAIN_DAYS,
 )
 from LastMile.db import connect
+from LastMile.engine import as_url, describe
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LastMile stockout forecast")
-    parser.add_argument("--db", default=DEFAULT_DB_PATH, help="SQLite database path")
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="MySQL URL (default: LASTMILE_DATABASE_URL)",
+    )
     parser.add_argument("--model", default=FORECAST_MODEL_PATH, help="Model artifact path")
     parser.add_argument("--all", action="store_true", help="Backtest, train, then score")
     parser.add_argument("--backtest", action="store_true", help="Run rolling-origin evaluation")
@@ -75,10 +79,7 @@ def _print_headline(metrics: pd.DataFrame) -> None:
 
 def main() -> int:
     args = parse_args()
-    db_path = Path(args.db)
-    if not db_path.exists():
-        print(f"Database not found: {db_path}")
-        return 1
+    url = as_url(args.db)
 
     do_backtest = args.backtest or args.all
     do_train = args.train or args.all
@@ -87,7 +88,8 @@ def main() -> int:
         print("Nothing to do; pass --all, --backtest, --train, or --score")
         return 1
 
-    conn = connect(str(db_path))
+    print(f"Using {describe(url)}")
+    conn = connect(url)
     try:
         fc.ensure_forecast_tables(conn)
         bundle = None

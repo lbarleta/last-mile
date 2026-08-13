@@ -1,175 +1,127 @@
+"""One-time setup: create tables and load the slow-changing reference data."""
+
+from __future__ import annotations
+
+from typing import Optional
+
 import pandas as pd
-import requests
-import sqlite3
-from datetime import datetime
-from typing import Optional, Dict, Any
+
+from .engine import rows_from_frame
+from .schema import create_all, ensure_indexes as _ensure_indexes
 from .utils import LastMileUtils
 
 
 class LastMileSetup:
-    """
-    A class to handle initial setup and configuration of the LastMile data system.
-    """
-    
-    def __init__(self, feeds_url: str, lang: str = 'en', db_path: str = 'lastmile.db'):
-        """
-        Initialize the LastMileSetup.
+    """Create the schema and populate stations and vehicle types."""
 
-        Args:
-            feeds_url (str): URL to the GBFS feed.
-            lang (str): Language code (e.g., 'en', 'es', 'fr').
-        """
+    def __init__(
+        self,
+        feeds_url: str,
+        lang: str = "en",
+        db_path: Optional[str] = None,
+    ):
         self.utils = LastMileUtils(feeds_url=feeds_url, lang=lang, db_path=db_path)
-    
-       
-    def setup_stations_table(self):
-        """
-        Create and populate the stations table with station information and regions.
-        This is a one-time setup operation.
-        """
-        try:
-            print("Setting up stations table...")
-                        
-            # Get station information
-            st_info = self.utils.load_feed_data(name='station_information', key='stations')
-            st_info.drop(columns=['rental_uris'], inplace=True)
-            st_info.drop_duplicates(inplace=True)
 
-            # Get regions information
-            regions = self.utils.load_feed_data(name='system_regions', key='regions')
-            regions.drop_duplicates(inplace=True)
-
-            # Merge station info with regions
-            stations = pd.merge(
-                st_info[['station_id', 'name', 'short_name', 'region_id', 'capacity', 'lat', 'lon']],
-                regions,
-                on='region_id',
-                how='left'
-            )
-            
-            # Round lat and lon to 5 decimal places
-            stations['lat'] = stations['lat'].round(5)
-            stations['lon'] = stations['lon'].round(5)
-            
-            stations.rename(columns={'name_x': 'name', 'name_y': 'region'}, inplace=True)
-
-            # Save to database
-            stations.to_sql('stations', self.utils.conn, if_exists='replace', index=False)
-            print(f"Stations table created and populated successfully with {len(stations)} stations")
-            
-            return stations
-            
-        except Exception as e:
-            print(f"Error setting up stations table: {e}")
-            raise
-    
-    def create_tables(self, overwrite: bool = False):
+    def setup_stations_table(self) -> pd.DataFrame:
         """
-        Create all necessary database tables for the LastMile system.
-        """
-        try:
-            print("Creating database tables...")
+        Load station metadata joined with its region name.
 
-            if self.verify_setup() and not overwrite:
-                print("All required tables already exist. Use overwrite=True to overwrite existing tables.")
-                return
-            
-            # Create stations table
-            self.setup_stations_table()
-            
-            # Create station_status table structure
-            cursor = self.utils.conn.cursor()
-            # timestamp is an hourly string: YYYY-MM-DD-HH:00
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS station_status (
-                    station_id TEXT,
-                    num_bikes_available INTEGER,
-                    num_docks_available INTEGER,
-                    num_ebikes_available INTEGER,
-                    num_docks_disabled INTEGER,
-                    num_bikes_disabled INTEGER,
-                    timestamp TEXT
+        Systems that are entirely free-floating publish an empty
+        ``station_information`` feed, which is valid GBFS and not an error.
+        """
+        print("Setting up stations table...")
+        st_info = self.utils.load_feed_data(name="station_information", key="stations")
+        if st_info.empty:
+            print("  station_information is empty (free-floating system)")
+            return st_info
+
+        for column in ("station_id", "name", "short_name", "region_id", "capacity", "lat", "lon"):
+            if column not in st_info.columns:
+                st_info[column] = None
+        st_info = st_info[
+            ["station_id", "name", "short_name", "region_id", "capacity", "lat", "lon"]
+        ].drop_duplicates(subset=["station_id"])
+
+        stations = st_info
+        if self.utils.has_feed("system_regions"):
+            regions = self.utils.load_feed_data(name="system_regions", key="regions")
+            if not regions.empty:
+                regions = regions.drop_duplicates(subset=["region_id"])
+                stations = pd.merge(
+                    st_info,
+                    regions[["region_id", "name"]].rename(columns={"name": "region"}),
+                    on="region_id",
+                    how="left",
                 )
-            ''')
+        if "region" not in stations.columns:
+            stations["region"] = None
 
-            # Create bike_status table structure
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS bike_status (
-                    bike_id TEXT,
-                    lat REAL,
-                    lon REAL,
-                    is_reserved INTEGER,
-                    is_disabled INTEGER,
-                    vehicle_type_id INTEGER,
-                    current_range_meters INTEGER,
-                    timestamp TEXT
-                )
-            ''')
-            
-            self.utils.conn.commit()
-            self.ensure_indexes()
-            print("All database tables created successfully")
-            
-        except sqlite3.Error as e:
-            print(f"Error creating tables: {e}")
-            raise
+        stations["lat"] = pd.to_numeric(stations["lat"], errors="coerce").round(5)
+        stations["lon"] = pd.to_numeric(stations["lon"], errors="coerce").round(5)
 
-    def ensure_indexes(self):
-        """Create indexes used by dashboard historical queries."""
-        from . import db as queries
+        columns = [
+            "station_id", "name", "short_name", "region_id",
+            "capacity", "lat", "lon", "region",
+        ]
+        self.utils.conn.upsert(
+            "stations", columns, rows_from_frame(stations, columns),
+            conflict=["station_id"],
+        )
+        self.utils.conn.commit()
+        print(f"Stations table populated with {len(stations)} stations")
+        return stations
 
-        queries.ensure_indexes(self.utils.conn)
+    def setup_vehicle_types(self) -> pd.DataFrame:
+        """
+        Load the ``vehicle_types`` feed.
+
+        Needed to interpret ``vehicle_type_id`` and to count e-bikes the way
+        the spec intends, rather than relying on Lyft's ``num_ebikes_available``.
+        """
+        types = self.utils.vehicle_types()
+        if types.empty:
+            print("No vehicle_types feed published")
+            return types
+        columns = [
+            "vehicle_type_id", "form_factor", "propulsion_type", "max_range_meters",
+        ]
+        self.utils.conn.upsert(
+            "vehicle_types", columns, rows_from_frame(types, columns),
+            conflict=["vehicle_type_id"],
+        )
+        self.utils.conn.commit()
+        print(f"Loaded {len(types)} vehicle types")
+        return types
+
+    def create_tables(self, overwrite: bool = False) -> None:
+        """Create every table and load reference data."""
+        print("Creating database tables...")
+        create_all(self.utils.conn)
+        if self.verify_setup() and not overwrite:
+            print("Tables already exist and stations are populated.")
+            return
+        self.setup_stations_table()
+        self.setup_vehicle_types()
+        print("All database tables created successfully")
+
+    def ensure_indexes(self) -> None:
+        _ensure_indexes(self.utils.conn)
         print("Database indexes verified")
-    
+
     def verify_setup(self) -> bool:
-        """
-        Verify that the setup is complete and all tables exist.
-        
-        Returns:
-            bool: True if setup is complete, False otherwise
-        """
-        try:
-            cursor = self.utils.conn.cursor()
-            
-            # Check if all required tables exist
-            tables = ['stations', 'station_status', 'bike_status']
-            for table in tables:
-                cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'")
-                if not cursor.fetchone():
-                    print(f"Table {table} not found")
-                    return False
-            
-            # Check if stations table has data
-            cursor.execute("SELECT COUNT(*) FROM stations")
-            station_count = cursor.fetchone()[0]
-            print(f"Found {station_count} stations in database")
-            
-            print("Setup verification completed successfully")
-            return True
-            
-        except Exception as e:
-            print(f"Error verifying setup: {e}")
-            return False
+        """True when the schema exists and station metadata is loaded."""
+        conn = self.utils.conn
+        for table in ("stations", "station_status", "bike_status"):
+            if not conn.has_table(table):
+                print(f"Table {table} not found")
+                return False
+        count = conn.fetchone("SELECT COUNT(*) FROM stations")[0]
+        print(f"Found {count} stations in database")
+        return count > 0
 
-
-    def __enter__(self):
-        """Context manager entry."""
+    def __enter__(self) -> "LastMileSetup":
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self.utils.disconnect()
         return False
-
-
-# Example usage
-if __name__ == "__main__":
-    # Setup the LastMile system
-    with LastMileSetup() as setup:
-        # Create all tables
-        setup.create_tables()
-        
-        # Verify setup
-        if setup.verify_setup():
-            print("LastMile setup completed successfully!")
-        else:
-            print("Setup verification failed!")
