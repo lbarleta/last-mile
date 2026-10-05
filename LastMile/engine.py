@@ -196,48 +196,53 @@ def _cols(columns: Sequence[str]) -> str:
     return ", ".join(f"`{c}`" for c in columns)
 
 
+def _is_stale(exc: BaseException) -> bool:
+    """True when the driver socket is dead and a fresh checkout should work."""
+    if isinstance(exc, PendingRollbackError):
+        return True
+    if isinstance(exc, DBAPIError) and exc.connection_invalidated:
+        return True
+    message = str(getattr(exc, "orig", exc)).lower()
+    return any(
+        needle in message
+        for needle in (
+            "packet sequence",
+            "mysql server has gone away",
+            "lost connection",
+        )
+    )
+
+
 class Db:
     """
-    Thin wrapper over a SQLAlchemy connection.
+    Thin wrapper over a SQLAlchemy engine.
 
-    Exists so the query layer can keep writing ``?`` placeholders and plain
-    tuples rather than being rewritten around SQLAlchemy's bind syntax.
+    The query layer keeps writing ``?`` placeholders and plain tuples; this
+    rewrites them to the named binds SQLAlchemy expects.
 
-    The dashboard caches this handle for the life of the Streamlit process.
-    Shared MySQL drops idle connections, which leaves SQLAlchemy in a failed
-    transaction; the next query would then raise PendingRollbackError forever.
-    Failed statements roll back (and retry once on a disconnect) so a refresh
-    recovers instead of staying stuck.
+    Each statement checks out a connection from the pool and returns it. That
+    is what makes ``pool_pre_ping`` actually run, keeps Streamlit sessions from
+    sharing one PyMySQL socket (which raises "Packet sequence number wrong"),
+    and recovers from PythonAnywhere dropping idle connections.
     """
 
-    def __init__(self, connection: Connection):
-        self._conn = connection
+    def __init__(self, bind: Engine | Connection):
+        self._engine = bind.engine if isinstance(bind, Connection) else bind
 
-    @property
-    def connection(self) -> Connection:
-        return self._conn
-
-    def _recover(self) -> None:
+    def _run(self, fn, *, write: bool = False):
+        ctx = self._engine.begin if write else self._engine.connect
         try:
-            self._conn.rollback()
-        except Exception:
-            pass
-
-    def _run(self, fn):
-        try:
-            return fn()
-        except PendingRollbackError:
-            self._recover()
-            return fn()
-        except DBAPIError as exc:
-            self._recover()
-            if exc.connection_invalidated:
-                return fn()
-            raise
+            with ctx() as conn:
+                return fn(conn)
+        except Exception as exc:
+            if not _is_stale(exc):
+                raise
+            with ctx() as conn:
+                return fn(conn)
 
     def execute(self, sql: str, params: Sequence[Any] | None = ()):
         bound = _bind(sql, params)
-        return self._run(lambda: self._conn.execute(*bound))
+        return self._run(lambda conn: conn.execute(*bound), write=True)
 
     def executemany(self, sql: str, rows: Sequence[Sequence[Any]]) -> int:
         """Run a statement over many parameter sets; returns rows affected."""
@@ -246,36 +251,38 @@ class Db:
         clause, _ = _bind(sql, rows[0])
         payload = [_params(row) for row in rows]
 
-        def _go():
-            result = self._conn.execute(clause, payload)
+        def _go(conn: Connection) -> int:
+            result = conn.execute(clause, payload)
             return result.rowcount if result.rowcount is not None else 0
 
-        return self._run(_go)
+        return self._run(_go, write=True)
 
     def fetchone(self, sql: str, params: Sequence[Any] | None = ()):
-        return self.execute(sql, params).fetchone()
+        bound = _bind(sql, params)
+        return self._run(lambda conn: conn.execute(*bound).fetchone())
 
     def fetchall(self, sql: str, params: Sequence[Any] | None = ()):
-        return self.execute(sql, params).fetchall()
+        bound = _bind(sql, params)
+        return self._run(lambda conn: conn.execute(*bound).fetchall())
 
     def read_sql(self, sql: str, params: Sequence[Any] | None = ()) -> pd.DataFrame:
         clause, bound = _bind(sql, params)
         return self._run(
-            lambda: pd.read_sql_query(clause, self._conn, params=bound or None)
+            lambda conn: pd.read_sql_query(clause, conn, params=bound or None)
         )
 
     def columns(self, table: str) -> set[str]:
         """Column names for a table, or an empty set if it does not exist."""
-        inspector = inspect(self._conn)
+        inspector = inspect(self._engine)
         if not inspector.has_table(table):
             return set()
         return {col["name"] for col in inspector.get_columns(table)}
 
     def has_table(self, table: str) -> bool:
-        return inspect(self._conn).has_table(table)
+        return inspect(self._engine).has_table(table)
 
     def indexes(self, table: str) -> set[str]:
-        inspector = inspect(self._conn)
+        inspector = inspect(self._engine)
         if not inspector.has_table(table):
             return set()
         return {ix["name"] for ix in inspector.get_indexes(table)}
@@ -332,7 +339,7 @@ class Db:
         return max(self.executemany(sql, rows), 0)
 
     def commit(self) -> None:
-        self._conn.commit()
+        """Writes already commit when their statement finishes."""
 
     def close(self) -> None:
-        self._conn.close()
+        """The engine is shared; disposing it would break other callers."""

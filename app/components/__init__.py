@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 
 from LastMile import LastMileMetrics
 from LastMile.config import TIMESTAMP_FORMAT
-from LastMile.engine import resolve_database_url
+from LastMile.engine import Db, as_url, make_engine, resolve_database_url
 
 UMAMI_SCRIPT_SRC = "https://cloud.umami.is/script.js"
 
@@ -198,9 +198,13 @@ def apply_layout_styles() -> None:
 
 
 @st.cache_resource
+def get_engine(db_path: str):
+    return make_engine(as_url(db_path))
+
+
 def get_metrics(db_path: str) -> LastMileMetrics:
-    return LastMileMetrics(db_path=db_path)
+    return LastMileMetrics(conn=Db(get_engine(db_path)))
 
 
 def clear_caches() -> None:
-    get_metrics.clear()
+    get_engine.clear()

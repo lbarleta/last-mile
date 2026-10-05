@@ -58,7 +58,7 @@ class LastMileUtils:
         self.db_path = db_path
         self.url = as_url(db_path)
         self.engine = make_engine(self.url)
-        self.conn = Db(self.engine.connect())
+        self.conn = Db(self.engine)
         self.feeds_url = feeds_url
         self.lang = lang
         self.feeds = self.get_system_feeds()
@@ -151,7 +151,7 @@ class LastMileUtils:
 
     def connect(self) -> Db:
         if self.conn is None:
-            self.conn = Db(self.engine.connect())
+            self.conn = Db(self.engine)
         return self.conn
 
     def disconnect(self) -> None:

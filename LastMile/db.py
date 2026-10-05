@@ -73,8 +73,8 @@ def _status_counts(prefix: str = "") -> str:
 
 
 def connect(db_path: Optional[str] = None) -> Db:
-    """Open a connection to the configured database, or to an explicit URL."""
-    return Db(make_engine(as_url(db_path)).connect())
+    """Open a handle to the configured database, or to an explicit URL."""
+    return Db(make_engine(as_url(db_path)))
 
 
 def ensure_indexes(conn: Db) -> None:

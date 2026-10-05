@@ -309,8 +309,7 @@ def main() -> int:
         return 0
 
     engine = make_engine(target_url)
-    with engine.connect() as connection:
-        create_all(Db(connection), with_indexes=False)
+    create_all(Db(engine), with_indexes=False)
     print("\nschema created")
 
     for table in tables:
@@ -325,12 +324,10 @@ def main() -> int:
         print(f"    {written:,} rows in {time.time() - started:.1f}s")
 
     print("\nbuilding indexes")
-    with engine.connect() as connection:
-        db = Db(connection)
-        ensure_indexes(db)
-        for table in tables:
-            db.execute(f"ANALYZE TABLE `{table}`")
-        db.commit()
+    db = Db(engine)
+    ensure_indexes(db)
+    for table in tables:
+        db.execute(f"ANALYZE TABLE `{table}`")
 
     source.close()
     print("done")
