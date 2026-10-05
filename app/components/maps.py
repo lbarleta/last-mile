@@ -22,6 +22,17 @@ STATUS_COLORS = {
 FREE_BIKE_COLOR = "#783cc0"
 FREE_BIKE_DISABLED_COLOR = "#5a5a5a"
 
+# Light gray Esri canvas — no API key. {z}/{y}/{x} is Esri's tile order.
+_ESRI_GRAY_BASE = (
+    "https://server.arcgisonline.com/ArcGIS/rest/services/"
+    "Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+)
+_ESRI_GRAY_LABELS = (
+    "https://server.arcgisonline.com/ArcGIS/rest/services/"
+    "Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+)
+_ESRI_ATTR = "Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ"
+
 # Empty weighs more than low so true shortages dominate the surface.
 HOTSPOT_WEIGHT = {"empty": 2.0, "low": 1.0}
 HOTSPOT_GRADIENT = {
@@ -401,10 +412,19 @@ def render_ops_map(
         control_scale=True,
     )
     folium.TileLayer(
-        "CartoDB positron",
+        tiles=_ESRI_GRAY_BASE,
         name="Basemap",
+        attr=_ESRI_ATTR,
         control=False,
-        attr="&copy; OpenStreetMap &copy; CartoDB",
+        max_zoom=16,
+    ).add_to(fmap)
+    folium.TileLayer(
+        tiles=_ESRI_GRAY_LABELS,
+        name="Labels",
+        attr=_ESRI_ATTR,
+        overlay=True,
+        control=False,
+        max_zoom=16,
     ).add_to(fmap)
 
     stations_layer = None
