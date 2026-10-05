@@ -22,6 +22,7 @@ from typing import Any, Optional, Sequence
 import pandas as pd
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import DBAPIError, PendingRollbackError
 
 from .config import TIMESTAMP_FORMAT
 
@@ -201,6 +202,12 @@ class Db:
 
     Exists so the query layer can keep writing ``?`` placeholders and plain
     tuples rather than being rewritten around SQLAlchemy's bind syntax.
+
+    The dashboard caches this handle for the life of the Streamlit process.
+    Shared MySQL drops idle connections, which leaves SQLAlchemy in a failed
+    transaction; the next query would then raise PendingRollbackError forever.
+    Failed statements roll back (and retry once on a disconnect) so a refresh
+    recovers instead of staying stuck.
     """
 
     def __init__(self, connection: Connection):
@@ -210,16 +217,40 @@ class Db:
     def connection(self) -> Connection:
         return self._conn
 
+    def _recover(self) -> None:
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass
+
+    def _run(self, fn):
+        try:
+            return fn()
+        except PendingRollbackError:
+            self._recover()
+            return fn()
+        except DBAPIError as exc:
+            self._recover()
+            if exc.connection_invalidated:
+                return fn()
+            raise
+
     def execute(self, sql: str, params: Sequence[Any] | None = ()):
-        return self._conn.execute(*_bind(sql, params))
+        bound = _bind(sql, params)
+        return self._run(lambda: self._conn.execute(*bound))
 
     def executemany(self, sql: str, rows: Sequence[Sequence[Any]]) -> int:
         """Run a statement over many parameter sets; returns rows affected."""
         if not rows:
             return 0
         clause, _ = _bind(sql, rows[0])
-        result = self._conn.execute(clause, [_params(row) for row in rows])
-        return result.rowcount if result.rowcount is not None else 0
+        payload = [_params(row) for row in rows]
+
+        def _go():
+            result = self._conn.execute(clause, payload)
+            return result.rowcount if result.rowcount is not None else 0
+
+        return self._run(_go)
 
     def fetchone(self, sql: str, params: Sequence[Any] | None = ()):
         return self.execute(sql, params).fetchone()
@@ -229,7 +260,9 @@ class Db:
 
     def read_sql(self, sql: str, params: Sequence[Any] | None = ()) -> pd.DataFrame:
         clause, bound = _bind(sql, params)
-        return pd.read_sql_query(clause, self._conn, params=bound or None)
+        return self._run(
+            lambda: pd.read_sql_query(clause, self._conn, params=bound or None)
+        )
 
     def columns(self, table: str) -> set[str]:
         """Column names for a table, or an empty set if it does not exist."""
