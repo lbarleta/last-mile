@@ -159,6 +159,7 @@ rideshare*.db
 .Trashes
 ehthumbs.db
 Thumbs.db
+*:Zone.Identifier
 
 # Temporary files
 *.tmp
@@ -166,15 +167,13 @@ Thumbs.db
 temp/
 tmp/
 
+# Local data warehouse
+data/
+
 # Log files
 *.log
 logs/
 
-# Local data warehouse (keep DB and sidecars out of git)
-data/
-*:Zone.Identifier
-# *.csv
-# *.json
 
 # Local env (Umami website ID, etc.) — never commit
 .env.local
