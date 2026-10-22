@@ -1,8 +1,9 @@
 # Last Mile
 
 Hourly bike-share warehouse and Streamlit dashboard, built on open
-[GBFS](https://github.com/NABSA/gbfs) feeds. Currently wired to Bay Wheels
-(San Francisco Bay Area).
+[GBFS](https://github.com/NABSA/gbfs) feeds. The collector and schema are
+meant to be **feed-agnostic** (GBFS 2.3 and 3.0). The dashboard copy and
+defaults are still Bay Wheels until that revamp lands.
 
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -29,6 +30,26 @@ GBFS ──► scripts/collect.py ──► MySQL ──► Streamlit (read-only
 
 Metric definitions and why particular visualizations were chosen are documented
 in [`NOTES.md`](NOTES.md).
+
+## Feed-agnostic development
+
+Future work should treat this repo as a GBFS client, not a Bay Wheels client.
+Do not add publisher-specific fields or a single city's geography as defaults.
+Read timezone, language, and display name from `system_information`; normalize
+v2.3 and v3.0 into one internal model.
+
+The two Austin feeds are the reference pair for development and tests — same
+system, both spec versions, so parser and schema changes have to work on both:
+
+- GBFS 2.3: https://austin.publicbikesystem.net/customer/gbfs/v2/gbfs.json
+- GBFS 3.0: https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json
+
+Austin is docked-only (no `free_bike_status` / `vehicle_status`), publishes
+empty `system_regions`, mixes bicycles and standing scooters, and uses
+`America/Chicago`. GBFS 3 also drops the language envelope on the discovery
+document, localizes `name` as `{text, language}` arrays, and renames
+`num_bikes_*` to `num_vehicles_*`. Code that only understands Bay Wheels 2.3
+will fail on the 3.0 feed.
 
 ## Quick start
 
