@@ -1,0 +1,382 @@
+"""
+Database connection and the thin wrapper the query layer uses.
+
+Query modules write ``?`` placeholders and pass tuple parameters; :class:`Db`
+rewrites them to the named binds SQLAlchemy expects. Snapshot hours cross this
+boundary as ``YYYY-MM-DD-HH:00`` strings, which is what the app, its cache keys,
+and the metric layer speak. They are bound as real datetimes and formatted back
+on the way out, so the ``ts`` column is a genuine DATETIME without that leaking
+upward.
+
+Porting to another engine (DuckDB is the planned move) means editing the three
+blocks marked ``DIALECT`` below and nothing else: URL handling, the SQL
+fragments, and the quoting/upsert statements inside :class:`Db`. The DDL lives
+separately in :mod:`lastmile.db.schema`; the queries in
+:mod:`lastmile.db.queries` are written to stay dialect-neutral.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Any
+
+import pandas as pd
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import DBAPIError, PendingRollbackError
+
+from ..constants import TIMESTAMP_FORMAT
+from ..settings import get_settings
+
+# --- DIALECT: connection URLs ---------------------------------------------
+
+
+def normalize_url(url: str) -> str:
+    """Pin PyMySQL onto the bare ``mysql://`` scheme."""
+    if url.startswith("mysql://"):
+        return "mysql+pymysql://" + url[len("mysql://") :]
+    return url
+
+
+def resolve_database_url() -> str:
+    """The configured connection URL, or raise with how to set one."""
+    url = get_settings().database_url.strip()
+    if not url:
+        raise RuntimeError(
+            "No database configured. Set LASTMILE_DATABASE_URL in your .env, "
+            "e.g. mysql://user:password@host/lastmile"
+        )
+    return normalize_url(url)
+
+
+def as_url(target: str | None) -> str:
+    """Normalize an explicit ``--db`` argument, falling back to settings."""
+    return normalize_url(target) if target else resolve_database_url()
+
+
+def describe(url: str) -> str:
+    """A version of the URL safe to print, with any password removed."""
+    return url.split("@")[-1] if "@" in url else url
+
+
+def make_engine(url: str | None = None, **kwargs: Any) -> Engine:
+    """Create an engine, defaulting to the configured database."""
+    url = normalize_url(url) if url else resolve_database_url()
+    # Shared hosts close idle connections and the dashboard sits idle a lot, so
+    # recycle below the usual timeout and check liveness before handing one out.
+    kwargs.setdefault("pool_pre_ping", True)
+    kwargs.setdefault("pool_recycle", 280)
+    return create_engine(url, **kwargs)
+
+
+def connect(url: str | None = None) -> Db:
+    """Open a handle to the configured database, or to an explicit URL."""
+    return Db(make_engine(as_url(url)))
+
+
+# --- timestamp conversion at the storage boundary -------------------------
+
+
+def to_dt(timestamp: str) -> datetime:
+    """Parse a ``YYYY-MM-DD-HH:00`` snapshot key into a datetime."""
+    return datetime.strptime(timestamp, TIMESTAMP_FORMAT)
+
+
+def to_key(value: Any) -> str | None:
+    """Format a stored timestamp back into a ``YYYY-MM-DD-HH:00`` key."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return value.strftime(TIMESTAMP_FORMAT)
+
+
+def keys_from_series(series: pd.Series) -> pd.Series:
+    """Vectorized :func:`to_key` for a DataFrame column."""
+    return pd.to_datetime(series, errors="coerce").dt.strftime(TIMESTAMP_FORMAT)
+
+
+def rows_from_frame(df: pd.DataFrame, columns: Sequence[str]) -> list[tuple]:
+    """
+    Frame to row tuples, with missing values as None.
+
+    The ``astype(object)`` matters: on a float column ``where(notna, None)``
+    writes NaN back rather than None, and the driver rejects NaN outright.
+    """
+    frame = df.reindex(columns=list(columns)).astype(object)
+    frame = frame.where(pd.notna(frame), None)
+    return list(frame.itertuples(index=False, name=None))
+
+
+# --- DIALECT: SQL fragments -----------------------------------------------
+#
+# DATE_FORMAT would be the natural way to write these, but its '%Y'-style codes
+# collide with PyMySQL's format paramstyle: a literal '%' in the statement gets
+# consumed as a parameter marker. Composing from DATE/HOUR/LPAD/CONCAT keeps the
+# SQL free of '%' entirely.
+
+
+def hour_expr(column: str) -> str:
+    """Zero-padded local hour, '00'–'23'."""
+    return f"LPAD(HOUR({column}), 2, '0')"
+
+
+def hour_label_expr(column: str) -> str:
+    """An 'HH:00' label for the snapshot picker."""
+    return f"CONCAT(LPAD(HOUR({column}), 2, '0'), ':00')"
+
+
+def date_expr(column: str) -> str:
+    """Local calendar date as 'YYYY-MM-DD'."""
+    return f"CAST(DATE({column}) AS CHAR)"
+
+
+def key_expr(column: str) -> str:
+    """The snapshot key in ``YYYY-MM-DD-HH:00`` form."""
+    return (
+        f"CONCAT(CAST(DATE({column}) AS CHAR), '-', "
+        f"LPAD(HOUR({column}), 2, '0'), ':00')"
+    )
+
+
+def real_cast(column: str) -> str:
+    """
+    Force float division; an integer column would otherwise truncate.
+
+    Multiplication rather than CAST(... AS DOUBLE), which only exists in
+    MySQL 8.0.17 and later.
+    """
+    return f"({column} * 1.0)"
+
+
+# --- connection wrapper ---------------------------------------------------
+
+_PLACEHOLDER = re.compile(r"\?")
+
+# A colon followed by a digit inside a string literal, as in the ':00' that
+# closes an hour label. SQLAlchemy's text() would read that as a bind parameter
+# named "00" and swap the literal out for a parameter marker. Our own binds are
+# always named pN, so a digit can never start a legitimate one here.
+_LITERAL_COLON = re.compile(r"(?<!\\):(?=\d)")
+
+
+def _scrub(value: Any) -> Any:
+    """
+    Missing values arrive from pandas as NaN or NaT; the database wants NULL.
+
+    The driver raises on NaN rather than coercing it, so anything that slips
+    through here fails at execute time with a much less obvious message.
+    """
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if value is pd.NaT:
+        return None
+    return value
+
+
+def _params(values: Sequence[Any]) -> dict:
+    return {f"p{i}": _scrub(v) for i, v in enumerate(values)}
+
+
+def _bind(sql: str, params: Sequence[Any] | None):
+    """Rewrite ``?`` placeholders into the named binds SQLAlchemy expects."""
+    sql = _LITERAL_COLON.sub(r"\\:", sql)
+    if not params:
+        return text(sql), {}
+    values = list(params)
+    index = -1
+
+    def _sub(_match: re.Match) -> str:
+        nonlocal index
+        index += 1
+        return f":p{index}"
+
+    bound_sql = _PLACEHOLDER.sub(_sub, sql)
+    if index + 1 != len(values):
+        raise ValueError(
+            f"expected {index + 1} parameters for query, got {len(values)}"
+        )
+    return text(bound_sql), _params(values)
+
+
+def _is_stale(exc: BaseException) -> bool:
+    """True when the driver socket is dead and a fresh checkout should work."""
+    if isinstance(exc, PendingRollbackError):
+        return True
+    if isinstance(exc, DBAPIError) and exc.connection_invalidated:
+        return True
+    message = str(getattr(exc, "orig", exc)).lower()
+    return any(
+        needle in message
+        for needle in (
+            "packet sequence",
+            "mysql server has gone away",
+            "lost connection",
+        )
+    )
+
+
+class Db:
+    """
+    Thin wrapper over a SQLAlchemy engine.
+
+    The query layer keeps writing ``?`` placeholders and plain tuples; this
+    rewrites them to the named binds SQLAlchemy expects.
+
+    Each statement checks out a connection from the pool and returns it. That
+    is what makes ``pool_pre_ping`` actually run, keeps Streamlit sessions from
+    sharing one PyMySQL socket (which raises "Packet sequence number wrong"),
+    and recovers from a host dropping idle connections.
+    """
+
+    def __init__(self, bind: Engine | Connection):
+        self._engine = bind.engine if isinstance(bind, Connection) else bind
+
+    def __enter__(self) -> Db:
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self.close()
+        return False
+
+    def _run(self, fn, *, write: bool = False):
+        ctx = self._engine.begin if write else self._engine.connect
+        try:
+            with ctx() as conn:
+                return fn(conn)
+        except Exception as exc:
+            if not _is_stale(exc):
+                raise
+            with ctx() as conn:
+                return fn(conn)
+
+    def execute(self, sql: str, params: Sequence[Any] | None = ()):
+        bound = _bind(sql, params)
+        return self._run(lambda conn: conn.execute(*bound), write=True)
+
+    def executemany(self, sql: str, rows: Sequence[Sequence[Any]]) -> int:
+        """Run a statement over many parameter sets; returns rows affected."""
+        if not rows:
+            return 0
+        clause, _ = _bind(sql, rows[0])
+        payload = [_params(row) for row in rows]
+
+        def _go(conn: Connection) -> int:
+            result = conn.execute(clause, payload)
+            return result.rowcount if result.rowcount is not None else 0
+
+        return self._run(_go, write=True)
+
+    def fetchone(self, sql: str, params: Sequence[Any] | None = ()):
+        bound = _bind(sql, params)
+        return self._run(lambda conn: conn.execute(*bound).fetchone())
+
+    def fetchall(self, sql: str, params: Sequence[Any] | None = ()):
+        bound = _bind(sql, params)
+        return self._run(lambda conn: conn.execute(*bound).fetchall())
+
+    def read_sql(self, sql: str, params: Sequence[Any] | None = ()) -> pd.DataFrame:
+        clause, bound = _bind(sql, params)
+        return self._run(
+            lambda conn: pd.read_sql_query(clause, conn, params=bound or None)
+        )
+
+    # --- introspection ----------------------------------------------------
+
+    def columns(self, table: str) -> set[str]:
+        """Column names for a table, or an empty set if it does not exist."""
+        inspector = inspect(self._engine)
+        if not inspector.has_table(table):
+            return set()
+        return {col["name"] for col in inspector.get_columns(table)}
+
+    def has_table(self, table: str) -> bool:
+        return inspect(self._engine).has_table(table)
+
+    def indexes(self, table: str) -> set[str]:
+        inspector = inspect(self._engine)
+        if not inspector.has_table(table):
+            return set()
+        return {ix["name"] for ix in inspector.get_indexes(table)}
+
+    def count(self, table: str) -> int:
+        """Row count, or 0 when the table is absent."""
+        if not self.has_table(table):
+            return 0
+        row = self.fetchone(f"SELECT COUNT(*) FROM {quote(table)}")
+        return int(row[0]) if row and row[0] is not None else 0
+
+    # --- DIALECT: writes --------------------------------------------------
+
+    def insert_ignore(
+        self,
+        table: str,
+        columns: Sequence[str],
+        rows: Sequence[Sequence[Any]],
+    ) -> int:
+        """
+        Insert rows, skipping any that collide with an existing key.
+
+        Collection is idempotent because of this: re-running the collector for
+        an hour that is already stored is a no-op rather than a second copy.
+        """
+        if not rows:
+            return 0
+        placeholders = ", ".join("?" * len(columns))
+        sql = (
+            f"INSERT IGNORE INTO {quote(table)} ({_cols(columns)}) "
+            f"VALUES ({placeholders})"
+        )
+        return max(self.executemany(sql, rows), 0)
+
+    def upsert(
+        self,
+        table: str,
+        columns: Sequence[str],
+        rows: Sequence[Sequence[Any]],
+        conflict: Sequence[str],
+    ) -> int:
+        """
+        Insert rows, overwriting the non-key columns when they already exist.
+
+        MySQL matches on any unique key rather than a named one, so ``conflict``
+        only decides which columns are left alone on update.
+        """
+        if not rows:
+            return 0
+        placeholders = ", ".join("?" * len(columns))
+        keys = set(conflict)
+        updatable = [c for c in columns if c not in keys]
+        if updatable:
+            assignments = ", ".join(
+                f"{quote(c)} = VALUES({quote(c)})" for c in updatable
+            )
+        else:
+            # Nothing to change, but the clause is what makes the insert a no-op
+            # instead of a duplicate-key error.
+            assignments = f"{quote(conflict[0])} = {quote(conflict[0])}"
+        sql = (
+            f"INSERT INTO {quote(table)} ({_cols(columns)}) "
+            f"VALUES ({placeholders}) ON DUPLICATE KEY UPDATE {assignments}"
+        )
+        return max(self.executemany(sql, rows), 0)
+
+    def commit(self) -> None:
+        """Writes already commit when their statement finishes."""
+
+    def close(self) -> None:
+        """The engine is shared; disposing it would break other callers."""
+
+
+def quote(identifier: str) -> str:
+    """Quote a table or column name. Backticks are MySQL's form."""
+    return f"`{identifier}`"
+
+
+def _cols(columns: Sequence[str]) -> str:
+    return ", ".join(quote(c) for c in columns)
