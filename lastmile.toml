@@ -1,0 +1,88 @@
+# LastMile configuration.
+#
+# Every key is optional — delete one and the built-in default applies (see the
+# Settings class in src/lastmile/settings.py). Any key can be overridden by an
+# environment variable named LASTMILE_<KEY>, so secrets belong in .env rather
+# than here:
+#
+#   database_url      ->  LASTMILE_DATABASE_URL
+#   coverage_radius_m ->  LASTMILE_COVERAGE_RADIUS_M
+#
+# Relative paths resolve against the directory holding this file.
+
+# --- database ---------------------------------------------------------------
+# Intentionally blank: set LASTMILE_DATABASE_URL in .env instead of committing
+# credentials. Example: mysql://user:password@host:3306/lastmile
+database_url = ""
+
+# --- GBFS feed ---------------------------------------------------------------
+feeds_url = "https://gbfs.baywheels.com/gbfs/2.3/gbfs.json"
+feeds_lang = "en"
+timezone = "America/Los_Angeles"
+request_timeout_s = 30
+
+# --- metrics -----------------------------------------------------------------
+# Daytime ops window (local hour, inclusive). Snapshots outside it are ignored
+# when scoring problematic stations.
+ops_day_hour_start = 7
+ops_day_hour_end = 20
+# A station is flagged if it was empty or full in any of the trailing N daytime hours.
+problematic_lookback_hours = 3
+# How far to look for a non-problematic station to rebalance from.
+backup_station_radius_m = 900
+# Free-floating e-bikes at or below this remaining range count as low-range.
+low_range_meters = 5000
+# A station holding both bikes and docks but below this bike share is "low".
+low_station_bike_share = 0.2
+# Trailing window for the "typical for this hour" supply baseline. Holds hour
+# of day fixed, because the ratio swings on a daily cycle.
+supply_baseline_days = 28
+# Overnight hours used to estimate fleet size, when nearly all bikes are parked.
+fleet_baseline_hours = [0, 1, 2, 3, 4]
+
+# --- walk-shed coverage --------------------------------------------------------
+# Radius around each available bike (~3-minute walk).
+coverage_radius_m = 300
+# City boundary used for the coverage map. Swap in your own GeoJSON to run the
+# dashboard over a different city.
+boundary_geojson = "assets/sf_county_boundary.geojson"
+# Projected CRS used for buffering; EPSG:3310 is California Albers (meters).
+projected_crs = "EPSG:3310"
+
+# --- weather (under development) ----------------------------------------------
+# One grid point for the city: SF's footprint is well below ERA5 resolution.
+weather_lat = 37.7749
+weather_lon = -122.4194
+weather_archive_url = "https://archive-api.open-meteo.com/v1/archive"
+weather_forecast_url = "https://api.open-meteo.com/v1/forecast"
+# ERA5 reanalysis lags real time by ~5 days; the forecast endpoint covers the gap.
+weather_archive_lag_days = 6
+weather_variables = [
+    "temperature_2m",
+    "precipitation",
+    "wind_speed_10m",
+    "relative_humidity_2m",
+    "cloud_cover",
+]
+
+# --- stockout forecasting (under development) ----------------------------------
+# Hours ahead to predict stockouts for.
+forecast_horizons = [1, 2, 3, 4, 5, 6]
+# Lags (hours) of a station's own occupancy used as model inputs.
+forecast_lag_hours = [1, 2, 3, 6, 12, 24, 168]
+# Trailing window for the same-station / same-hour stockout rate.
+forecast_climatology_days = 28
+# History loaded before a window so lag features are populated on its first hour.
+forecast_warmup_days = 30
+# How much history to feed the trainer; 0 means everything available.
+forecast_train_days = 180
+# Cap on training rows (station-hours x horizons) to keep fits in memory.
+forecast_max_train_rows = 1200000
+forecast_model_path = "data/forecast_model.joblib"
+# Probability at or above which a station is flagged at risk in the UI.
+forecast_risk_threshold = 0.5
+
+# --- dashboard -----------------------------------------------------------------
+dashboard_title = "Last Mile"
+# Optional analytics; set LASTMILE_UMAMI_WEBSITE_ID in .env.
+umami_website_id = ""

@@ -5,16 +5,17 @@ Hourly bike-share warehouse and Streamlit dashboard, built on open
 meant to be **feed-agnostic** (GBFS 2.3 and 3.0). The dashboard copy and
 defaults are still Bay Wheels until that revamp lands.
 
-[![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
+[![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## What it does
 
-The project has two sides that share one MySQL warehouse.
+One installable package with two sides sharing one warehouse (MySQL today,
+DuckDB planned).
 
-**Ingest.** A collector pulls station and free-bike status from the Bay Wheels
-GBFS feed once an hour and appends it to a local database. Station metadata is
-set up once; after that, each run is a cron-friendly snapshot write.
+**Ingest.** `lastmile collect` pulls station and free-bike status from the Bay
+Wheels GBFS feed once an hour and appends it to the database. Station metadata
+is set up once; after that, each run is a cron-friendly snapshot write.
 
 **Dashboard.** A Streamlit app reads that warehouse and presents it in three
 views. **Live Ops** surfaces system-wide health for a chosen hour — supply
@@ -25,7 +26,7 @@ same indicators over time: fleet availability, station failure patterns, and an
 estimate of how many bikes are in use through the day and week.
 
 ```text
-GBFS ──► scripts/collect.py ──► MySQL ──► Streamlit (read-only)
+GBFS ──► lastmile collect ──► database ──► Streamlit (read-only)
 ```
 
 Metric definitions and why particular visualizations were chosen are documented
@@ -56,57 +57,69 @@ will fail on the 3.0 feed.
 ```bash
 git clone https://github.com/lbarleta/last-mile.git
 cd last-mile && python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 
-cp .env.example .env                # then set LASTMILE_DATABASE_URL
-export LASTMILE_DATABASE_URL='mysql://user:password@host/lastmile'
+cp .env.example .env     # then set LASTMILE_DATABASE_URL
 
-python scripts/collect.py --setup   # first time: creates tables, loads stations
-python scripts/collect.py           # hourly thereafter
-streamlit run app/main.py
+lastmile init-db         # first time: creates tables, loads station metadata
+lastmile collect         # hourly thereafter (bootstraps itself if needed)
+lastmile status          # what the warehouse holds
+lastmile dashboard       # serve the Streamlit app
 ```
 
-`LASTMILE_DATABASE_URL` is required and names a MySQL database. A `.env` at the
-project root is read automatically by both the dashboard and the scripts, and
-real environment variables win over it, so a cron entry needs nothing but the
-interpreter and the script path.
+A cron entry needs nothing but the venv's `lastmile` on PATH:
+
+```cron
+5 * * * * cd /path/to/last-mile && .venv/bin/lastmile collect >> logs/collect.log 2>&1
+```
+
+## Configuration
+
+Three layers, each overriding the one before it:
+
+1. Built-in defaults (the `Settings` class in `src/lastmile/settings.py`).
+2. **`lastmile.toml`** at the repo root — tunables you want in git: search
+   radii, thresholds, feed URLs, the coverage boundary GeoJSON.
+3. **Environment / `.env`** — secrets and host-specific values. Any TOML key
+   maps to `LASTMILE_<KEY>` uppercased (`database_url` →
+   `LASTMILE_DATABASE_URL`, `coverage_radius_m` → `LASTMILE_COVERAGE_RADIUS_M`).
+
+`LASTMILE_DATABASE_URL` is the one required value. `.env` is read automatically
+by every entry point, and real environment variables win over it.
 
 ## Library usage
 
-`db_path` takes a MySQL URL; omit it to use `LASTMILE_DATABASE_URL`.
-
 ```python
-from LastMile import LastMileSetup, LastMileManager, LastMileMetrics
+from lastmile import db
+from lastmile.metrics import Metrics
+from lastmile.collect import collect_snapshot, init_db
 
-with LastMileSetup(
-    feeds_url="https://gbfs.baywheels.com/gbfs/2.3/gbfs.json",
-    lang="en",
-) as setup:
-    setup.create_tables()
+conn = db.connect()          # uses LASTMILE_DATABASE_URL
+init_db(conn)                # schema + reference data, idempotent
+collect_snapshot(conn)       # one hourly snapshot
 
-with LastMileManager(
-    feeds_url="https://gbfs.baywheels.com/gbfs/2.3/gbfs.json",
-    lang="en",
-) as manager:
-    manager.update_data()
-
-with LastMileMetrics() as metrics:
+with Metrics() as metrics:
     print(metrics.get_live_ops_metrics())
 ```
-
-See [`LastMile/README.md`](LastMile/README.md) for the package layout and API.
 
 ## Project layout
 
 ```text
 last-mile/
-  LastMile/          Python package (ingest + metrics)
-  app/               Streamlit dashboard
-  scripts/collect.py Hourly GBFS collector
-  assets/            SF county boundary for coverage
-  scripts/migrate_db.py  One-time legacy SQLite -> MySQL load
-  data/              Legacy SQLite file, migration source only (gitignored)
-  NOTES.md           Metric definitions and design choices
+  lastmile.toml             Tunables (committed); secrets go in .env
+  assets/                   City boundary GeoJSON for coverage (user-swappable)
+  src/lastmile/
+    cli.py                  The `lastmile` command
+    settings.py             Config loading; constants.py holds internals
+    gbfs.py                 GBFS feed client
+    collect.py              Hourly snapshots + reference data
+    db/                     Connection wrapper, schema DDL, query layer
+    metrics/                Live Ops / Trends / snapshot metrics
+    forecasting/            Stockout forecast (under development)
+    weather.py              Weather cache (under development)
+    dashboard/              Streamlit app (`lastmile dashboard`)
+  tests/                    Pytest wiring (fixtures only so far)
+  NOTES.md                  Metric definitions and design choices
 ```
 
 ## Data model
@@ -123,7 +136,10 @@ Timestamps are local (`America/Los_Angeles`) hourly keys of the form
 ## Future plans
 
 - **Stockout forecast** — per-station probability of running empty or full over
-  the next several hours, trained offline and surfaced as a dashboard view
+  the next several hours (`lastmile forecast`, needs `pip install -e ".[forecast]"`);
+  under development alongside the weather cache (`lastmile weather`)
+- **DuckDB** — the dialect-specific SQL is isolated in `src/lastmile/db/`
+  (marked `DIALECT`) and `db/schema.py`, so the MySQL → DuckDB move stays local
 - **Maintenance tracking in Trends** — graphs for disabled bikes and docks over
   time, so service outages are visible alongside availability
 - **Coverage tracking in Trends** — how the San Francisco walk-shed evolves
