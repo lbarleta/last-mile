@@ -1,0 +1,222 @@
+{
+  "data": {
+    "stations": [
+      {
+        "address": "E 10th/Red River",
+        "capacity": 15,
+        "external_id": "ad4bd5d4-b824-11ef-86f9-0224060a328f",
+        "is_charging_station": false,
+        "is_virtual_station": false,
+        "lat": 30.270155,
+        "lon": -97.735364,
+        "name": [
+          {
+            "language": "en",
+            "text": "E 10th/Red River"
+          },
+          {
+            "language": "fr",
+            "text": "E 10th/Red River"
+          },
+          {
+            "language": "nl",
+            "text": "E 10th/Red River"
+          },
+          {
+            "language": "es",
+            "text": "E 10th/Red River"
+          }
+        ],
+        "rental_methods": [
+          "key",
+          "transitcard",
+          "creditcard",
+          "phone"
+        ],
+        "rental_uris": {},
+        "short_name": [
+          {
+            "language": "en",
+            "text": "1"
+          },
+          {
+            "language": "fr",
+            "text": "1"
+          },
+          {
+            "language": "nl",
+            "text": "1"
+          },
+          {
+            "language": "es",
+            "text": "1"
+          }
+        ],
+        "station_id": "1",
+        "vehicle_docks_capacity": [
+          {
+            "count": 15,
+            "vehicle_type_ids": [
+              "ASTRO",
+              "BOOST",
+              "CHLOE",
+              "COSMO",
+              "EFIT",
+              "FIT",
+              "ICONIC",
+              "METRO_BASE",
+              "METRO_CONNECTED",
+              "TRAILER"
+            ]
+          }
+        ],
+        "vehicle_types_capacity": []
+      },
+      {
+        "address": "W 11th/Congress @ The Texas Capitol",
+        "capacity": 11,
+        "external_id": "ad4bdd35-b824-11ef-86f9-0224060a328f",
+        "is_charging_station": false,
+        "is_virtual_station": false,
+        "lat": 30.272551000000004,
+        "lon": -97.741225,
+        "name": [
+          {
+            "language": "en",
+            "text": "W 11th/Congress @ The Texas Capitol"
+          },
+          {
+            "language": "fr",
+            "text": "W 11th/Congress @ The Texas Capitol"
+          },
+          {
+            "language": "nl",
+            "text": "W 11th/Congress @ The Texas Capitol"
+          },
+          {
+            "language": "es",
+            "text": "W 11th/Congress @ The Texas Capitol"
+          }
+        ],
+        "rental_methods": [
+          "key",
+          "transitcard",
+          "creditcard",
+          "phone"
+        ],
+        "rental_uris": {},
+        "short_name": [
+          {
+            "language": "en",
+            "text": "2"
+          },
+          {
+            "language": "fr",
+            "text": "2"
+          },
+          {
+            "language": "nl",
+            "text": "2"
+          },
+          {
+            "language": "es",
+            "text": "2"
+          }
+        ],
+        "station_id": "2",
+        "vehicle_docks_capacity": [
+          {
+            "count": 11,
+            "vehicle_type_ids": [
+              "ASTRO",
+              "BOOST",
+              "CHLOE",
+              "COSMO",
+              "EFIT",
+              "FIT",
+              "ICONIC",
+              "METRO_BASE",
+              "METRO_CONNECTED",
+              "TRAILER"
+            ]
+          }
+        ],
+        "vehicle_types_capacity": []
+      },
+      {
+        "address": "E 11th/Salina",
+        "capacity": 11,
+        "external_id": "ad4be041-b824-11ef-86f9-0224060a328f",
+        "is_charging_station": false,
+        "is_virtual_station": false,
+        "lat": 30.266422,
+        "lon": -97.721623,
+        "name": [
+          {
+            "language": "en",
+            "text": "E 11th/Salina"
+          },
+          {
+            "language": "fr",
+            "text": "E 11th/Salina"
+          },
+          {
+            "language": "nl",
+            "text": "E 11th/Salina"
+          },
+          {
+            "language": "es",
+            "text": "E 11th/Salina"
+          }
+        ],
+        "rental_methods": [
+          "key",
+          "transitcard",
+          "creditcard",
+          "phone"
+        ],
+        "rental_uris": {},
+        "short_name": [
+          {
+            "language": "en",
+            "text": "3"
+          },
+          {
+            "language": "fr",
+            "text": "3"
+          },
+          {
+            "language": "nl",
+            "text": "3"
+          },
+          {
+            "language": "es",
+            "text": "3"
+          }
+        ],
+        "station_id": "3",
+        "vehicle_docks_capacity": [
+          {
+            "count": 11,
+            "vehicle_type_ids": [
+              "ASTRO",
+              "BOOST",
+              "CHLOE",
+              "COSMO",
+              "EFIT",
+              "FIT",
+              "ICONIC",
+              "METRO_BASE",
+              "METRO_CONNECTED",
+              "TRAILER"
+            ]
+          }
+        ],
+        "vehicle_types_capacity": []
+      }
+    ]
+  },
+  "last_updated": "2026-10-29T19:48:01Z",
+  "ttl": 2,
+  "version": "3.0"
+}

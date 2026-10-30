@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .. import db
 from ..db import queries
-from ..settings import get_settings
 
 
 class BaseMetric:
     """Connection handling and timestamp helpers shared by all metric groups."""
 
-    def __init__(self, url: str | None = None, conn: db.Db | None = None):
+    def __init__(self, lake: str | Path | None = None, conn: db.Db | None = None):
         self._owns_conn = conn is None
-        self.conn = conn if conn is not None else db.connect(url)
-        self.timezone = get_settings().timezone
+        self.conn = conn if conn is not None else db.connect(lake)
+
+    @property
+    def timezone(self) -> str:
+        """The zone stored hours are in, as recorded when the lake was built."""
+        from ..collect import resolve_timezone
+
+        return resolve_timezone(self.conn)
 
     def close(self) -> None:
         if self._owns_conn and self.conn is not None:

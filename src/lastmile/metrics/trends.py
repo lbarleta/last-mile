@@ -32,7 +32,7 @@ class TrendsMetrics(BaseMetric):
         Hourly availability, split into the parts that make up the fleet.
 
         Docked bikes are reported as ``classic_available`` + ``ebikes_available``
-        (GBFS counts e-bikes inside ``num_bikes_available``), and free-floating
+        (GBFS counts e-bikes inside ``num_vehicles_available``), and free-floating
         bikes are added as their own series so the three stack into the total
         rideable fleet without double counting. Free-floating bikes count as San
         Francisco inventory.

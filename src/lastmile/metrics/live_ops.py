@@ -15,13 +15,13 @@ from .base import BaseMetric
 
 def station_status_bucket(row: pd.Series) -> str:
     """One of empty / full / low / healthy; empty wins when both are zero."""
-    if row["num_bikes_available"] == 0:
+    if row["num_vehicles_available"] == 0:
         return "empty"
     if row["num_docks_available"] == 0:
         return "full"
-    capacity = row["num_bikes_available"] + row["num_docks_available"]
+    capacity = row["num_vehicles_available"] + row["num_docks_available"]
     low_share = get_settings().low_station_bike_share
-    if capacity > 0 and row["num_bikes_available"] / capacity < low_share:
+    if capacity > 0 and row["num_vehicles_available"] / capacity < low_share:
         return "low"
     return "healthy"
 
@@ -288,11 +288,11 @@ class LiveOpsMetrics(BaseMetric):
         healthy_stations = int((status == "healthy").sum())
         low_stations = int((status == "low").sum())
         total_stations = int(len(snapshot))
-        bikes = int(snapshot["num_bikes_available"].sum())
-        ebikes = int(snapshot["num_ebikes_available"].sum())
+        bikes = int(snapshot["num_vehicles_available"].sum())
+        ebikes = int(snapshot["num_vehicles_available_electric"].sum())
         docks = int(snapshot["num_docks_available"].sum())
         docks_disabled = int(snapshot["num_docks_disabled"].sum())
-        bikes_disabled = int(snapshot["num_bikes_disabled"].sum())
+        bikes_disabled = int(snapshot["num_vehicles_disabled"].sum())
         capacity_slots = bikes + docks
         dock_inventory = docks + docks_disabled
         classic = max(bikes - ebikes, 0)
@@ -395,12 +395,12 @@ class LiveOpsMetrics(BaseMetric):
         cols = [
             "name",
             "region",
-            "num_bikes_available",
+            "num_vehicles_available",
             "num_docks_available",
-            "num_ebikes_available",
+            "num_vehicles_available_electric",
             "capacity",
         ]
-        empty = snapshot[snapshot["num_bikes_available"] == 0].copy()
+        empty = snapshot[snapshot["num_vehicles_available"] == 0].copy()
         return empty.sort_values("num_docks_available", ascending=False).head(n)[cols]
 
     def get_top_full_stations(self, n: int = 10) -> pd.DataFrame:
@@ -410,13 +410,13 @@ class LiveOpsMetrics(BaseMetric):
         cols = [
             "name",
             "region",
-            "num_bikes_available",
+            "num_vehicles_available",
             "num_docks_available",
-            "num_ebikes_available",
+            "num_vehicles_available_electric",
             "capacity",
         ]
         full = snapshot[snapshot["num_docks_available"] == 0].copy()
-        return full.sort_values("num_bikes_available", ascending=False).head(n)[cols]
+        return full.sort_values("num_vehicles_available", ascending=False).head(n)[cols]
 
     def get_station_status_by_region(
         self, timestamp: str | None = None

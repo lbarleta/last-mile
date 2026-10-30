@@ -1,0 +1,113 @@
+{
+  "data": {
+    "plans": [
+      {
+        "currency": "USD",
+        "description": [
+          {
+            "language": "en",
+            "text": "Single-trip pass. $2.50 to unlock + $0.25 per minute. To end a trip, dock a bike at station. Temporary $24 hold applies.\n$2.50"
+          },
+          {
+            "language": "es",
+            "text": "Pase de un solo viaje. $2.50 para desbloquear + $0.25 por minuto (hasta 30 minutos por viaje). Para finalizar un viaje, estaciona la bicicleta en una estaci\u00f3n. $24 retencion temporal.\n"
+          }
+        ],
+        "is_taxable": false,
+        "name": [
+          {
+            "language": "en",
+            "text": "Pay-as-you-ride"
+          },
+          {
+            "language": "es",
+            "text": "Pague por viaje"
+          }
+        ],
+        "per_min_pricing": [
+          {
+            "end": 1,
+            "interval": 1,
+            "rate": 2.5,
+            "start": 0
+          },
+          {
+            "end": 471,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 1
+          }
+        ],
+        "plan_id": "182",
+        "price": 0.0
+      },
+      {
+        "currency": "USD",
+        "description": [
+          {
+            "language": "en",
+            "text": "Unlimited 30-minute trips within 24 hours. Trips over 30 minutes are charged $0.25 per additional minute. To end a trip, dock a bike at station. Temporary $24 hold applies.\n$10"
+          },
+          {
+            "language": "es",
+            "text": "Viajes ilimitados de 30 minutos durante 24 horas. Los viajes que excedan los 30 minutos tienen un costo de $0.25 por cada minuto adicional. Para finalizar un viaje, estaciona la bicicleta en una estaci\u00f3n. $24 retencion temporal.\n$10"
+          }
+        ],
+        "is_taxable": false,
+        "name": [
+          {
+            "language": "en",
+            "text": "1 Day Pass"
+          },
+          {
+            "language": "es",
+            "text": "Pase de 1 d\u00eda"
+          }
+        ],
+        "per_min_pricing": [
+          {
+            "end": 33,
+            "interval": 1,
+            "rate": 0.5,
+            "start": 32
+          },
+          {
+            "end": 34,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 33
+          },
+          {
+            "end": 35,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 34
+          },
+          {
+            "end": 36,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 35
+          },
+          {
+            "end": 37,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 36
+          },
+          {
+            "end": 511,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 37
+          }
+        ],
+        "plan_id": "183",
+        "price": 10.0
+      }
+    ]
+  },
+  "last_updated": "2026-10-29T19:48:02Z",
+  "ttl": 30,
+  "version": "3.0"
+}

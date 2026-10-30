@@ -9,12 +9,13 @@ from lastmile.dashboard.components import (
     format_snapshot_date,
     get_metrics,
     inject_umami,
-    resolve_db_path,
+    resolve_lake_path,
 )
-from lastmile.dashboard.views import forecast, live_ops, map_view, trends
+from lastmile.dashboard.views import live_ops, map_view, trends
+from lastmile.settings import get_settings
 
 st.set_page_config(
-    page_title="Last Mile",
+    page_title=get_settings().dashboard_title,
     page_icon="🚲",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -23,28 +24,35 @@ st.set_page_config(
 inject_umami()
 apply_layout_styles()
 
-db_path = resolve_db_path()
-if db_path is None:
+lake_path = resolve_lake_path()
+if lake_path is None:
     st.error(
-        "Set `LASTMILE_DATABASE_URL` to your MySQL database, "
-        "for example `mysql://user:password@host/lastmile`."
+        "No warehouse found. Run `lastmile init-db` to create one, or point "
+        "`LASTMILE_LAKE_PATH` at an existing lake directory."
     )
     st.stop()
 
-metrics_svc = get_metrics(db_path)
-latest_ts = metrics_svc.get_latest_timestamp()
+metrics_svc = get_metrics(lake_path)
+first_ts, latest_ts = metrics_svc.get_timestamp_bounds()
 latest_date = format_snapshot_date(latest_ts) if latest_ts else "unknown"
+first_date = format_snapshot_date(first_ts) if first_ts else "unknown"
+
+# Whose system this is comes from the feed's own system_information, collected
+# alongside the snapshots — nothing here is specific to one operator or city.
+system = metrics_svc.get_system_info() or {}
+system_name = system.get("name") or system.get("system_id") or "a GBFS system"
+spec_version = system.get("gbfs_version") or "GBFS"
 
 st.markdown(
     f"""
 <div class="lm-header">
-  <div class="lm-title">Last Mile</div>
-  <div class="lm-subtitle">Bay Wheels · San Francisco Bay Area</div>
+  <div class="lm-title">{get_settings().dashboard_title}</div>
+  <div class="lm-subtitle">{system_name}</div>
   <div class="lm-blurb">
-    An ops dashboard for Bay Wheels (Lyft) that collects hourly
-    <a href="https://github.com/NABSA/gbfs">GBFS</a> snapshots of station and
-    free-bike status into a local database.<br/>
-    Collection currently spans from October 25, 2025 to {latest_date}.
+    An ops dashboard that collects hourly
+    <a href="https://github.com/MobilityData/gbfs">GBFS</a> {spec_version}
+    snapshots of station and vehicle status into a local Parquet warehouse.<br/>
+    Collection currently spans from {first_date} to {latest_date}.
     Metric definitions and design choices are in
     <a href="https://github.com/lbarleta/last-mile/blob/main/NOTES.md">NOTES.md</a>.
     By <a href="https://github.com/lbarleta/last-mile">Leo Barleta</a>.
@@ -54,8 +62,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# "Forecast" is under development and stays out of the options list; the
-# dispatch branch below keeps it one edit away from being re-enabled.
 view = st.segmented_control(
     "View",
     options=["Live Ops", "Map", "Trends"],
@@ -65,8 +71,6 @@ view = st.segmented_control(
 
 if view == "Map":
     map_view.render(metrics_svc)
-elif view == "Forecast":
-    forecast.render(metrics_svc)
 elif view == "Trends":
     trends.render(metrics_svc)
 else:

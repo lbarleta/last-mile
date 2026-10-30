@@ -1,0 +1,31 @@
+{
+  "data": {
+    "en": {
+      "feeds": [
+        {
+          "name": "system_information",
+          "url": "system_information"
+        },
+        {
+          "name": "station_information",
+          "url": "station_information"
+        },
+        {
+          "name": "free_bike_status",
+          "url": "free_bike_status"
+        },
+        {
+          "name": "vehicle_types",
+          "url": "vehicle_types"
+        },
+        {
+          "name": "geofencing_zones",
+          "url": "geofencing_zones"
+        }
+      ]
+    }
+  },
+  "last_updated": 1793295369,
+  "ttl": 0,
+  "version": "2.3"
+}

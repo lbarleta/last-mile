@@ -1,0 +1,41 @@
+{
+  "data": {
+    "feeds": [
+      {
+        "name": "gbfs_versions",
+        "url": "gbfs_versions"
+      },
+      {
+        "name": "geofencing_zones",
+        "url": "geofencing_zones"
+      },
+      {
+        "name": "station_information",
+        "url": "station_information"
+      },
+      {
+        "name": "station_status",
+        "url": "station_status"
+      },
+      {
+        "name": "system_information",
+        "url": "system_information"
+      },
+      {
+        "name": "system_pricing_plans",
+        "url": "system_pricing_plans"
+      },
+      {
+        "name": "system_regions",
+        "url": "system_regions"
+      },
+      {
+        "name": "vehicle_types",
+        "url": "vehicle_types"
+      }
+    ]
+  },
+  "last_updated": "2026-10-29T19:48:01Z",
+  "ttl": 30,
+  "version": "3.0"
+}

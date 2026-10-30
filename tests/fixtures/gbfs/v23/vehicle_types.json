@@ -1,0 +1,51 @@
+{
+  "data": {
+    "vehicle_types": [
+      {
+        "default_pricing_plan_id": "182",
+        "form_factor": "bicycle",
+        "max_range_meters": 0.0,
+        "name": "ICONIC",
+        "pricing_plan_ids": [
+          "182",
+          "183",
+          "184",
+          "185"
+        ],
+        "propulsion_type": "human",
+        "vehicle_type_id": "ICONIC"
+      },
+      {
+        "default_pricing_plan_id": "182",
+        "form_factor": "bicycle",
+        "max_range_meters": 0.0,
+        "name": "EFIT",
+        "pricing_plan_ids": [
+          "182",
+          "183",
+          "184",
+          "185"
+        ],
+        "propulsion_type": "electric_assist",
+        "vehicle_type_id": "EFIT"
+      },
+      {
+        "default_pricing_plan_id": "182",
+        "form_factor": "scooter_standing",
+        "max_range_meters": 0.0,
+        "name": "CHLOE",
+        "pricing_plan_ids": [
+          "182",
+          "183",
+          "184",
+          "185"
+        ],
+        "propulsion_type": "electric",
+        "vehicle_type_id": "CHLOE"
+      }
+    ]
+  },
+  "last_updated": 1793303280,
+  "ttl": 30,
+  "version": "2.3"
+}

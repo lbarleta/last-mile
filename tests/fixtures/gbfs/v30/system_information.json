@@ -1,0 +1,37 @@
+{
+  "data": {
+    "email": "bikeshare@capmetro.org",
+    "feed_contact_email": "mobility-data-client@lyft.com",
+    "languages": [
+      "en",
+      "fr",
+      "nl",
+      "es"
+    ],
+    "name": [
+      {
+        "language": "en",
+        "text": "austin"
+      },
+      {
+        "language": "fr",
+        "text": "austin"
+      },
+      {
+        "language": "nl",
+        "text": "austin"
+      },
+      {
+        "language": "es",
+        "text": "austin"
+      }
+    ],
+    "opening_hours": "Mo-Su,PH 00:00-24:00",
+    "phone_number": "+5124741200",
+    "system_id": "austin",
+    "timezone": "America/Chicago"
+  },
+  "last_updated": "2026-10-29T19:48:01Z",
+  "ttl": 30,
+  "version": "3.0"
+}

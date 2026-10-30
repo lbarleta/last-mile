@@ -14,9 +14,12 @@ Mutually exclusive; empty wins if both bikes and docks are zero:
 | Low | has both, bike share `< 20%` of (bikes+docks) |
 | Healthy | has both, bike share `≥ 20%` |
 
-Free-floating bikes: no region in GBFS → attributed to **San Francisco**.
+Free-floating vehicles: no region in GBFS, only coordinates → all attributed to
+one region, `FREE_FLOATING_REGION` in `constants.py`. Still the Bay Wheels
+default; a system whose regions are named differently needs it changed.
 
-Timestamps: local `America/Los_Angeles`, key `YYYY-MM-DD-HH:00`.
+Timestamps: the collected system's own local hour (from its
+`system_information.timezone`), key `YYYY-MM-DD-HH:00`.
 
 ---
 
@@ -32,8 +35,8 @@ Timestamps: local `America/Los_Angeles`, key `YYYY-MM-DD-HH:00`.
 
 ### Coverage (headline, second)
 
-- Share of SF land area within **300 m** (~3 min walk) of an available bike (docked or free-floating)
-- Buffer in projected CRS (`EPSG:3310`), SF county boundary from `assets/`
+- Share of the city's land area within **300 m** (~3 min walk) of an available bike (docked or free-floating)
+- Buffer in the configured projected CRS, city boundary from `boundary_geojson` (ships with SF county; swap it per deployment)
 - Delta: vs prior hour (unlike supply balance)
 
 ### Problematic stations
@@ -55,7 +58,7 @@ Timestamps: local `America/Los_Angeles`, key `YYYY-MM-DD-HH:00`.
 
 - Stacked: docked classic (bikes − e-bikes), docked e-bikes, free-floating
 - Separate dashed line: available docks (not stacked — different meaning)
-- Classic is net of e-bikes because GBFS puts e-bikes inside `num_bikes_available`
+- Classic is net of e-bikes because GBFS puts e-bikes inside `num_vehicles_available`; the electric share is summed from `station_vehicle_types_available`
 - X-axis: hour always; date only under the first tick of each day
 
 ### Status over time

@@ -1,56 +1,11 @@
 # Last Mile
 
-Hourly bike-share warehouse and Streamlit dashboard, built on open
-[GBFS](https://github.com/NABSA/gbfs) feeds. The collector and schema are
-meant to be **feed-agnostic** (GBFS 2.3 and 3.0). The dashboard copy and
-defaults are still Bay Wheels until that revamp lands.
+Hourly [GBFS](https://github.com/MobilityData/gbfs) collection into a Parquet
+warehouse, with a Streamlit dashboard over it. Point it at any system's
+`gbfs.json`, on spec 3.0 or 2.3.
 
 [![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-## What it does
-
-One installable package with two sides sharing one warehouse (MySQL today,
-DuckDB planned).
-
-**Ingest.** `lastmile collect` pulls station and free-bike status from the Bay
-Wheels GBFS feed once an hour and appends it to the database. Station metadata
-is set up once; after that, each run is a cron-friendly snapshot write.
-
-**Dashboard.** A Streamlit app reads that warehouse and presents it in three
-views. **Live Ops** surfaces system-wide health for a chosen hour — supply
-balance, walk-shed coverage, availability KPIs, problematic stations, and how
-status mixes across regions. **Map** places stations and free-floating bikes
-geographically, colored by empty, low, healthy, or full. **Trends** follows the
-same indicators over time: fleet availability, station failure patterns, and an
-estimate of how many bikes are in use through the day and week.
-
-```text
-GBFS ──► lastmile collect ──► database ──► Streamlit (read-only)
-```
-
-Metric definitions and why particular visualizations were chosen are documented
-in [`NOTES.md`](NOTES.md).
-
-## Feed-agnostic development
-
-Future work should treat this repo as a GBFS client, not a Bay Wheels client.
-Do not add publisher-specific fields or a single city's geography as defaults.
-Read timezone, language, and display name from `system_information`; normalize
-v2.3 and v3.0 into one internal model.
-
-The two Austin feeds are the reference pair for development and tests — same
-system, both spec versions, so parser and schema changes have to work on both:
-
-- GBFS 2.3: https://austin.publicbikesystem.net/customer/gbfs/v2/gbfs.json
-- GBFS 3.0: https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json
-
-Austin is docked-only (no `free_bike_status` / `vehicle_status`), publishes
-empty `system_regions`, mixes bicycles and standing scooters, and uses
-`America/Chicago`. GBFS 3 also drops the language envelope on the discovery
-document, localizes `name` as `{text, language}` arrays, and renames
-`num_bikes_*` to `num_vehicles_*`. Code that only understands Bay Wheels 2.3
-will fail on the 3.0 feed.
 
 ## Quick start
 
@@ -59,93 +14,112 @@ git clone https://github.com/lbarleta/last-mile.git
 cd last-mile && python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-cp .env.example .env     # then set LASTMILE_DATABASE_URL
-
-lastmile init-db         # first time: creates tables, loads station metadata
-lastmile collect         # hourly thereafter (bootstraps itself if needed)
-lastmile status          # what the warehouse holds
-lastmile dashboard       # serve the Streamlit app
+lastmile init-db      # create the lake, load reference data
+lastmile collect      # one hourly snapshot; run from cron
+lastmile status       # what the warehouse holds
+lastmile dashboard    # serve the Streamlit app
 ```
 
-A cron entry needs nothing but the venv's `lastmile` on PATH:
+Nothing needs configuring to try it. The lake defaults to `data/lake` and the
+feed to Austin's GBFS 3.0.
 
 ```cron
 5 * * * * cd /path/to/last-mile && .venv/bin/lastmile collect >> logs/collect.log 2>&1
 ```
 
-## Configuration
+## Warehouse
 
-Three layers, each overriding the one before it:
-
-1. Built-in defaults (the `Settings` class in `src/lastmile/settings.py`).
-2. **`lastmile.toml`** at the repo root — tunables you want in git: search
-   radii, thresholds, feed URLs, the coverage boundary GeoJSON.
-3. **Environment / `.env`** — secrets and host-specific values. Any TOML key
-   maps to `LASTMILE_<KEY>` uppercased (`database_url` →
-   `LASTMILE_DATABASE_URL`, `coverage_radius_m` → `LASTMILE_COVERAGE_RADIUS_M`).
-
-`LASTMILE_DATABASE_URL` is the one required value. `.env` is read automatically
-by every entry point, and real environment variables win over it.
-
-## Library usage
-
-```python
-from lastmile import db
-from lastmile.metrics import Metrics
-from lastmile.collect import collect_snapshot, init_db
-
-conn = db.connect()          # uses LASTMILE_DATABASE_URL
-init_db(conn)                # schema + reference data, idempotent
-collect_snapshot(conn)       # one hourly snapshot
-
-with Metrics() as metrics:
-    print(metrics.get_live_ops_metrics())
-```
-
-## Project layout
+A directory of Parquet files read by DuckDB in-process. No server, no
+credentials, no connection string; moving a warehouse is copying the directory.
 
 ```text
-last-mile/
-  lastmile.toml             Tunables (committed); secrets go in .env
-  assets/                   City boundary GeoJSON for coverage (user-swappable)
-  src/lastmile/
-    cli.py                  The `lastmile` command
-    settings.py             Config loading; constants.py holds internals
-    gbfs.py                 GBFS feed client
-    collect.py              Hourly snapshots + reference data
-    db/                     Connection wrapper, schema DDL, query layer
-    metrics/                Live Ops / Trends / snapshot metrics
-    forecasting/            Stockout forecast (under development)
-    weather.py              Weather cache (under development)
-    dashboard/              Streamlit app (`lastmile dashboard`)
-  tests/                    Pytest wiring (fixtures only so far)
-  NOTES.md                  Metric definitions and design choices
+data/lake/
+  station_status/2026-10-29.parquet       hourly history, one file per day
+  station_information/data.parquet        current state
+  station_information_log/data.parquet    one row per add / change / removal
 ```
 
-## Data model
+Tables are named for the GBFS feeds they hold and columns for the fields in
+them, under 3.0 names. Two kinds of feed, two shapes:
 
-| Table | Role |
-| --- | --- |
-| `stations` | Static station info (name, capacity, lat/lon, region) |
-| `station_status` | Hourly availability per station |
-| `bike_status` | Hourly free-bike locations and status |
+| Shape | Tables | Written |
+| --- | --- | --- |
+| Snapshotted | `station_status`, `station_vehicle_types_available`, `station_vehicle_docks_available`, `vehicle_status` | appended once per collection run, partitioned by day |
+| Tracked | `system_information`, `gbfs_versions`, `system_regions`, `system_pricing_plans`, `system_alerts`, `vehicle_types`, `station_information` | current state, plus a `_log` row whenever an entity is added, changed or removed |
 
-Timestamps are local (`America/Los_Angeles`) hourly keys of the form
-`YYYY-MM-DD-HH:00`, which makes joins across tables direct.
+Geofencing zones are collected but are not a table: zones have no ids in GBFS
+and nothing reads them live, so each version of the collection is archived as
+one standalone GeoJSON document — `geofencing_zones/<timestamp>.geojson`, the
+newest file being current — written only when the feed's content changed, with
+geometry exactly as published. Open one directly in QGIS or
+`geopandas.read_file`.
 
-## Future plans
+Collection is idempotent: re-running an hour that is already stored adds
+nothing. Writes land as a file rename, so the collector can append while the
+dashboard reads.
 
-- **Stockout forecast** — per-station probability of running empty or full over
-  the next several hours (`lastmile forecast`, needs `pip install -e ".[forecast]"`);
-  under development alongside the weather cache (`lastmile weather`)
-- **DuckDB** — the dialect-specific SQL is isolated in `src/lastmile/db/`
-  (marked `DIALECT`) and `db/schema.py`, so the MySQL → DuckDB move stays local
-- **Maintenance tracking in Trends** — graphs for disabled bikes and docks over
-  time, so service outages are visible alongside availability
-- **Coverage tracking in Trends** — how the San Francisco walk-shed evolves
-  hour by hour and day by day, not only at a single Live Ops snapshot
+Not collected: per-vehicle `rental_uris`.
 
-## Acknowledgments
+Read the lake without this package:
 
-- [General Bikeshare Feed Specification (GBFS)](https://github.com/NABSA/gbfs)
-- [Bay Wheels](https://www.lyft.com/bikes/bay-wheels) open data
+```bash
+duckdb -c "SELECT ts, SUM(num_vehicles_available) FROM 'data/lake/station_status/*.parquet'
+           GROUP BY ts ORDER BY ts"
+```
+
+## Feeds
+
+`lastmile.gbfs` reads 2.3 and 3.0 and returns the 3.0 shape. It handles the
+discovery envelope (`data.<lang>.feeds` vs `data.feeds`), the renamed feeds
+(`free_bike_status` → `vehicle_status`) and fields (`num_bikes_available` →
+`num_vehicles_available`, `bike_id` → `vehicle_id`), localized `{text,
+language}` names, RFC 3339 timestamps, and boolean flags. The spec version is
+read from the discovery document, or inferred from its shape when absent.
+
+Timezone, display name and spec version come from the system's own
+`system_information` feed and are stored in `system_information`. The snapshot
+hour is bucketed in that timezone.
+
+GBFS has no electric-vehicle count; it is derived by joining
+`station_vehicle_types_available` to `vehicle_types.propulsion_type`.
+
+## Dashboard
+
+Three views. **Live Ops**: system health for a chosen hour — supply balance,
+walk-shed coverage, availability KPIs, problematic stations, status by region.
+**Map**: stations and free-floating vehicles, colored empty / low / healthy /
+full. **Trends**: the same indicators over time. Metric definitions are in
+[`NOTES.md`](NOTES.md).
+
+## Configuration
+
+Defaults in `Settings` (`src/lastmile/settings.py`), overridden by
+`lastmile.toml`, overridden by the environment or `.env`. Any key maps to
+`LASTMILE_<KEY>` uppercased. Nothing is required; the two a new deployment
+usually sets are `feeds_url` and `boundary_geojson`.
+
+## Tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+No network and no server: feed tests run against recorded GBFS documents in
+`tests/fixtures/gbfs/`, warehouse tests build a lake in a tmp directory.
+
+## Not implemented
+
+`lastmile weather` and `lastmile forecast`, and the modules behind them
+(`weather.py`, `forecasting/`), are stubs — wiring with no logic. The `weather`
+table is declared as a placeholder but nothing writes to it, and no forecast
+tables exist.
+
+## Collection cadence
+
+`lastmile collect` buckets each run to the local hour, and the snapshot key
+(`YYYY-MM-DD-HH:00`) has no minute field. Running the cron entry more often
+than hourly is safe but pointless: the first run of each hour stores a
+snapshot, the rest fetch the feed and discard it as a duplicate key. Finer
+resolution would mean widening the key format and revisiting the metric
+definitions that count stored rows as hours.

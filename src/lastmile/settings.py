@@ -9,12 +9,12 @@ Three layers, each overriding the one before it:
    ``LASTMILE_CONFIG`` points). This is where tunables live: search radii,
    thresholds, feed URLs.
 3. Environment variables, including anything in a ``.env`` file. Use these for
-   deployment-specific values you would rather not commit — above all the
-   database URL.
+   deployment-specific values you would rather not commit — paths, analytics
+   ids, a feed URL that differs per host.
 
 Keys are flat: the TOML key and the ``Settings`` field share a name, and the
 environment variable is that name uppercased with a ``LASTMILE_`` prefix, so
-``database_url`` is ``LASTMILE_DATABASE_URL`` and ``coverage_radius_m`` is
+``lake_path`` is ``LASTMILE_LAKE_PATH`` and ``coverage_radius_m`` is
 ``LASTMILE_COVERAGE_RADIUS_M``. Strings are coerced to the type of the default;
 lists are comma-separated in the environment.
 
@@ -44,15 +44,19 @@ class Settings:
     # The directory holding lastmile.toml (or the cwd when there is none).
     root: Path = Path(".")
 
-    # --- database -----------------------------------------------------------
-    # No useful default on purpose: put the URL in .env as
-    # LASTMILE_DATABASE_URL rather than committing credentials to lastmile.toml.
-    database_url: str = ""
+    # --- warehouse ----------------------------------------------------------
+    # Directory holding the Parquet data lake, relative to this file's
+    # directory unless absolute. Nothing else is needed to run: no server, no
+    # credentials, and the whole warehouse moves by copying this directory.
+    lake_path: str = "data/lake"
 
     # --- GBFS feed ----------------------------------------------------------
-    feeds_url: str = "https://gbfs.baywheels.com/gbfs/2.3/gbfs.json"
+    # A GBFS discovery document (gbfs.json) for any system, 2.3 or 3.x.
+    feeds_url: str = "https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
     feeds_lang: str = "en"
-    timezone: str = "America/Los_Angeles"
+    # Blank reads the system's own timezone from its system_information feed,
+    # which is where a feed-agnostic deployment should get it.
+    timezone: str = ""
     request_timeout_s: int = 30
 
     # --- metrics ------------------------------------------------------------
@@ -78,38 +82,6 @@ class Settings:
     # California State Plane Zone III (meters) — good for SF buffering
     projected_crs: str = "EPSG:3310"
 
-    # --- weather (under development) -----------------------------------------
-    # One grid point for the city; station-level variation is below ERA5 resolution.
-    weather_lat: float = 37.7749
-    weather_lon: float = -122.4194
-    weather_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
-    weather_forecast_url: str = "https://api.open-meteo.com/v1/forecast"
-    # ERA5 reanalysis lags real time by ~5 days; the forecast endpoint covers the gap.
-    weather_archive_lag_days: int = 6
-    weather_variables: tuple[str, ...] = (
-        "temperature_2m",
-        "precipitation",
-        "wind_speed_10m",
-        "relative_humidity_2m",
-        "cloud_cover",
-    )
-
-    # --- stockout forecasting (under development) -----------------------------
-    forecast_horizons: tuple[int, ...] = (1, 2, 3, 4, 5, 6)
-    # Lags (hours) of a station's own occupancy used as model inputs
-    forecast_lag_hours: tuple[int, ...] = (1, 2, 3, 6, 12, 24, 168)
-    # Trailing window for the same-station / same-hour-of-day stockout rate
-    forecast_climatology_days: int = 28
-    # History loaded before a window so lag features are populated on its first hour
-    forecast_warmup_days: int = 30
-    # How much history to feed the trainer (0 = everything available)
-    forecast_train_days: int = 180
-    # Cap on training rows (station-hours x horizons) to keep fits in memory
-    forecast_max_train_rows: int = 1_200_000
-    forecast_model_path: str = "data/forecast_model.joblib"
-    # Probability at or above which a station is flagged as at risk in the UI
-    forecast_risk_threshold: float = 0.5
-
     # --- dashboard ------------------------------------------------------------
     dashboard_title: str = "Last Mile"
     # Optional Umami analytics; set LASTMILE_UMAMI_WEBSITE_ID in .env
@@ -121,12 +93,12 @@ class Settings:
         return path if path.is_absolute() else self.root / path
 
     @property
-    def boundary_geojson_path(self) -> Path:
-        return self.path(self.boundary_geojson)
+    def lake_dir(self) -> Path:
+        return self.path(self.lake_path)
 
     @property
-    def forecast_model_file(self) -> Path:
-        return self.path(self.forecast_model_path)
+    def boundary_geojson_path(self) -> Path:
+        return self.path(self.boundary_geojson)
 
 
 # --- loading --------------------------------------------------------------
