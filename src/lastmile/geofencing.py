@@ -75,25 +75,22 @@ def document(data: dict[str, Any]) -> dict[str, Any]:
     return collection
 
 
-def is_empty(doc: dict[str, Any]) -> bool:
-    return not doc.get("features") and not doc.get("global_rules")
-
-
 def record(root: str | Path, doc: dict[str, Any], when: datetime) -> bool:
     """
     Store a capture if its content differs from the current one.
 
-    Returns whether a file was written. A first capture with no zones and no
-    global rules stores nothing: most docked systems publish a permanently
-    empty collection, and a file saying so every deployment is noise.
+    Returns whether a file was written. An empty collection is a capture like
+    any other — including the first one. It is what lets the archive say "this
+    system had no zones then" rather than "nobody looked", and what keeps an
+    emptied collection from reading as if its old zones were still active. It
+    stays a single file for as long as the feed stays empty, because identical
+    content is never rewritten.
     """
     current = latest(root)
     content = _canonical(doc)
     if current is not None:
         if _canonical(json.loads(current.read_text(encoding="utf-8"))) == content:
             return False
-    elif is_empty(doc):
-        return False
 
     directory = capture_dir(root)
     directory.mkdir(parents=True, exist_ok=True)

@@ -24,10 +24,11 @@ FREE_FLOATING = ("freefloat_v23", "freefloat_v30")
 @pytest.mark.parametrize("feed_set", DOCKED)
 def test_init_db_loads_every_reference_feed(lake, gbfs_client, feed_set):
     results = collect.init_db(lake, gbfs_client(feed_set))
-    # Austin advertises geofencing_zones but publishes zero features, so no
-    # capture is taken; the documents side is covered in test_geofencing.py.
+    # Austin advertises geofencing_zones with zero features: one empty capture,
+    # recording that; the documents side is covered in test_geofencing.py.
     geofencing = results.pop("geofencing_zones")
-    assert geofencing["captures"] == 0
+    assert geofencing["captures"] == 1
+    assert geofencing["features"] == 0
     assert {name: counts["total"] for name, counts in results.items()} == {
         "system_information": 1,
         "gbfs_versions": 3,
