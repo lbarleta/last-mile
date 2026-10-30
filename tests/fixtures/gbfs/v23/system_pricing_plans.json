@@ -1,0 +1,77 @@
+{
+  "data": {
+    "plans": [
+      {
+        "currency": "USD",
+        "description": "Single-trip pass. $2.50 to unlock + $0.25 per minute. To end a trip, dock a bike at station. Temporary $24 hold applies.\n$2.50",
+        "is_taxable": false,
+        "name": "Pay-as-you-ride",
+        "per_min_pricing": [
+          {
+            "end": 1,
+            "interval": 1,
+            "rate": 2.5,
+            "start": 0
+          },
+          {
+            "end": 471,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 1
+          }
+        ],
+        "plan_id": "182",
+        "price": 0.0
+      },
+      {
+        "currency": "USD",
+        "description": "Unlimited 30-minute trips within 24 hours. Trips over 30 minutes are charged $0.25 per additional minute. To end a trip, dock a bike at station. Temporary $24 hold applies.\n$10",
+        "is_taxable": false,
+        "name": "1 Day Pass",
+        "per_min_pricing": [
+          {
+            "end": 33,
+            "interval": 1,
+            "rate": 0.5,
+            "start": 32
+          },
+          {
+            "end": 34,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 33
+          },
+          {
+            "end": 35,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 34
+          },
+          {
+            "end": 36,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 35
+          },
+          {
+            "end": 37,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 36
+          },
+          {
+            "end": 511,
+            "interval": 1,
+            "rate": 0.25,
+            "start": 37
+          }
+        ],
+        "plan_id": "183",
+        "price": 10.0
+      }
+    ]
+  },
+  "last_updated": 1793303280,
+  "ttl": 30,
+  "version": "2.3"
+}

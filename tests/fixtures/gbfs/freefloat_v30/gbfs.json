@@ -1,0 +1,29 @@
+{
+  "data": {
+    "feeds": [
+      {
+        "name": "system_information",
+        "url": "system_information"
+      },
+      {
+        "name": "station_information",
+        "url": "station_information"
+      },
+      {
+        "name": "vehicle_status",
+        "url": "vehicle_status"
+      },
+      {
+        "name": "vehicle_types",
+        "url": "vehicle_types"
+      },
+      {
+        "name": "geofencing_zones",
+        "url": "geofencing_zones"
+      }
+    ]
+  },
+  "last_updated": "2026-10-29T17:36:09Z",
+  "ttl": 30,
+  "version": "3.0"
+}

@@ -251,12 +251,12 @@ PANEL_CSS = """
 
 
 def availability_bucket(row: pd.Series) -> str:
-    if row["num_bikes_available"] == 0:
+    if row["num_vehicles_available"] == 0:
         return "empty"
     if row["num_docks_available"] == 0:
         return "full"
-    capacity = row["num_bikes_available"] + row["num_docks_available"]
-    if capacity > 0 and row["num_bikes_available"] / capacity < 0.2:
+    capacity = row["num_vehicles_available"] + row["num_docks_available"]
+    if capacity > 0 and row["num_vehicles_available"] / capacity < 0.2:
         return "low"
     return "healthy"
 
@@ -272,9 +272,9 @@ def _add_stations(layer: folium.FeatureGroup, stations: pd.DataFrame) -> None:
         status = str(row["status"])
         tip_info = (
             f"{row.get('name', '')} · {row.get('region') or 'Unknown'} · "
-            f"Bikes {int(row['num_bikes_available'])} · "
+            f"Bikes {int(row['num_vehicles_available'])} · "
             f"Docks {int(row['num_docks_available'])} · "
-            f"E-bikes {int(row['num_ebikes_available'])}"
+            f"E-bikes {int(row['num_vehicles_available_electric'])}"
         )
         folium.CircleMarker(
             location=[float(row["lat"]), float(row["lon"])],
@@ -344,7 +344,7 @@ def _add_free_bikes(layer: folium.FeatureGroup, bikes: pd.DataFrame) -> None:
             if pd.notna(range_m)
             else "n/a"
         )
-        tip_info = f"{row['bike_id']} · Range {range_txt}"
+        tip_info = f"{row['vehicle_id']} · Range {range_txt}"
         folium.RegularPolygonMarker(
             location=[float(row["lat"]), float(row["lon"])],
             number_of_sides=3,

@@ -1,0 +1,45 @@
+{
+  "data": {
+    "vehicles": [
+      {
+        "available_until": "2026-10-30T00:00:00Z",
+        "current_fuel_percent": 0.62,
+        "current_range_meters": 12400.0,
+        "home_station_id": "h1",
+        "is_disabled": false,
+        "is_reserved": false,
+        "last_reported": "2026-10-29T17:35:00Z",
+        "lat": 30.2701556,
+        "lon": -97.7353644,
+        "pricing_plan_id": "182",
+        "vehicle_equipment": ["child_seat_a", "helmet"],
+        "vehicle_id": "2b2f1a30",
+        "vehicle_type_id": "scooter"
+      },
+      {
+        "current_fuel_percent": 0.11,
+        "current_range_meters": 2100.0,
+        "is_disabled": true,
+        "is_reserved": false,
+        "last_reported": "2026-10-29T17:34:00Z",
+        "lat": 30.2725512,
+        "lon": -97.7412251,
+        "vehicle_id": "9c41dd02",
+        "vehicle_type_id": "scooter"
+      },
+      {
+        "is_disabled": false,
+        "is_reserved": true,
+        "last_reported": "2026-10-29T17:33:00Z",
+        "lat": 30.2688,
+        "lon": -97.7399,
+        "station_id": "s9",
+        "vehicle_id": "7fa03b91",
+        "vehicle_type_id": "classic"
+      }
+    ]
+  },
+  "last_updated": "2026-10-29T17:36:09Z",
+  "ttl": 30,
+  "version": "3.0"
+}

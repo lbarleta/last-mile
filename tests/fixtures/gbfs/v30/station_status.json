@@ -1,0 +1,114 @@
+{
+  "data": {
+    "stations": [
+      {
+        "is_installed": true,
+        "is_renting": true,
+        "is_returning": true,
+        "last_reported": "2026-10-29T19:47:05.805Z",
+        "num_docks_available": 2,
+        "num_docks_disabled": 0,
+        "num_vehicles_available": 0,
+        "num_vehicles_disabled": 0,
+        "station_id": "1",
+        "vehicle_docks_available": [
+          {
+            "count": 2,
+            "vehicle_type_ids": [
+              "EFIT",
+              "BOOST",
+              "FIT"
+            ]
+          }
+        ],
+        "vehicle_types_available": [
+          {
+            "count": 0,
+            "vehicle_type_id": "FIT"
+          },
+          {
+            "count": 0,
+            "vehicle_type_id": "BOOST"
+          },
+          {
+            "count": 0,
+            "vehicle_type_id": "EFIT"
+          }
+        ]
+      },
+      {
+        "is_installed": true,
+        "is_renting": true,
+        "is_returning": true,
+        "last_reported": "2026-10-29T19:46:07.106Z",
+        "num_docks_available": 11,
+        "num_docks_disabled": 0,
+        "num_vehicles_available": 0,
+        "num_vehicles_disabled": 0,
+        "station_id": "2",
+        "vehicle_docks_available": [
+          {
+            "count": 11,
+            "vehicle_type_ids": [
+              "EFIT",
+              "BOOST",
+              "FIT"
+            ]
+          }
+        ],
+        "vehicle_types_available": [
+          {
+            "count": 0,
+            "vehicle_type_id": "FIT"
+          },
+          {
+            "count": 0,
+            "vehicle_type_id": "BOOST"
+          },
+          {
+            "count": 0,
+            "vehicle_type_id": "EFIT"
+          }
+        ]
+      },
+      {
+        "is_installed": true,
+        "is_renting": true,
+        "is_returning": true,
+        "last_reported": "2026-10-29T19:47:10.59Z",
+        "num_docks_available": 10,
+        "num_docks_disabled": 0,
+        "num_vehicles_available": 1,
+        "num_vehicles_disabled": 0,
+        "station_id": "3",
+        "vehicle_docks_available": [
+          {
+            "count": 10,
+            "vehicle_type_ids": [
+              "EFIT",
+              "BOOST",
+              "FIT"
+            ]
+          }
+        ],
+        "vehicle_types_available": [
+          {
+            "count": 0,
+            "vehicle_type_id": "FIT"
+          },
+          {
+            "count": 0,
+            "vehicle_type_id": "BOOST"
+          },
+          {
+            "count": 1,
+            "vehicle_type_id": "EFIT"
+          }
+        ]
+      }
+    ]
+  },
+  "last_updated": "2026-10-29T19:48:01Z",
+  "ttl": 8,
+  "version": "3.0"
+}

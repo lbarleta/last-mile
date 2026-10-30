@@ -1,12 +1,19 @@
 """
 Hourly GBFS collection, plus the slow-changing reference data.
 
-Snapshots are bucketed to the local hour and inserted against the
-``(entity, ts)`` primary key, so re-running the collector inside the same hour
-is a no-op rather than a duplicate. Note the hour repeats once a year when DST
+Two rhythms. The status feeds are snapshotted every hour and appended, bucketed
+to the local hour of the *system being collected*, not the host's, and merged
+against the ``(entity, ts)`` key — so re-running the collector inside the same
+hour adds nothing rather than a duplicate. The hour repeats once a year when DST
 falls back; the key means the second reading is skipped.
 
-Functions return row counts and leave printing to the CLI.
+Everything else — stations, vehicle types, pricing plans, regions, alerts —
+changes a few times a year, so it is stored as current state plus a log of
+changes rather than an hourly copy. See :meth:`lastmile.db.Db.sync`.
+
+The feed's own shape is :mod:`lastmile.gbfs`'s problem; everything arriving here
+is already normalized to GBFS 3.0. Functions return row counts and leave
+printing to the CLI.
 """
 
 from __future__ import annotations
@@ -16,230 +23,166 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from .constants import BIKE_COLUMNS, STATION_COLUMNS, TIMESTAMP_FORMAT
+from . import geofencing
+from .constants import TIMESTAMP_FORMAT
 from .db import Db, rows_from_frame
-from .db.schema import create_all
-from .gbfs import GbfsClient, as_int_flag, count_electric
+from .db.queries import stored_timezone
+from .db.schema import HOURLY_TABLES, create_all, table
+from .gbfs import SYSTEM_INFORMATION_FIELDS, GbfsClient
 from .settings import get_settings
 
-STATION_REF_COLUMNS = (
-    "station_id",
-    "name",
-    "short_name",
-    "region_id",
-    "capacity",
-    "lat",
-    "lon",
-    "region",
-)
-VEHICLE_TYPE_COLUMNS = (
-    "vehicle_type_id",
-    "form_factor",
-    "propulsion_type",
-    "max_range_meters",
-)
+# Tracked table <- the client accessor that fills it. Order matters only for
+# how the CLI reports it.
+REFERENCE_FEEDS = {
+    "gbfs_versions": "gbfs_versions",
+    "system_regions": "system_regions",
+    "system_pricing_plans": "system_pricing_plans",
+    "system_alerts": "system_alerts",
+    "vehicle_types": "vehicle_types",
+    "station_information": "station_information",
+}
+
+# Used only when neither the configuration nor the feed names a timezone, which
+# would otherwise leave the snapshot hour undefined.
+FALLBACK_TIMEZONE = "UTC"
 
 
-def snapshot_hour() -> datetime:
+def resolve_timezone(
+    conn: Db | None = None, client: GbfsClient | None = None
+) -> str:
+    """
+    The zone snapshot hours are bucketed in.
+
+    Configuration wins, because an operator may deliberately want a different
+    one. Otherwise the system's own ``system_information.timezone`` is used,
+    read from the warehouse when it has been collected and from the live feed
+    when a client is at hand. Collecting Austin against a Los Angeles default
+    would silently file every snapshot two hours early.
+    """
+    configured = get_settings().timezone.strip()
+    if configured:
+        return configured
+    if client is not None and client.timezone:
+        return client.timezone
+    if conn is not None:
+        stored = stored_timezone(conn)
+        if stored:
+            return stored
+    return FALLBACK_TIMEZONE
+
+
+def snapshot_hour(timezone: str) -> datetime:
     """The current local hour, naive, as stored in the ``ts`` columns."""
-    now = datetime.now(ZoneInfo(get_settings().timezone))
+    now = datetime.now(ZoneInfo(timezone))
     return now.replace(minute=0, second=0, microsecond=0, tzinfo=None)
 
 
 # --- hourly snapshot --------------------------------------------------------
 
 
-def station_status_frame(client: GbfsClient, ts: datetime) -> pd.DataFrame:
-    """
-    Current station status, including the availability flags GBFS
-    publishes and this project previously discarded.
-    """
-    status = client.load_feed_data("station_status", "stations")
-    if status.empty:
-        return status
-
-    electric_ids = client.electric_type_ids()
-    out = pd.DataFrame({"station_id": status["station_id"].astype(str)})
-    for column in (
-        "num_bikes_available",
-        "num_docks_available",
-        "num_docks_disabled",
-        "num_bikes_disabled",
-    ):
-        out[column] = (
-            pd.to_numeric(status[column], errors="coerce")
-            if column in status.columns
-            else None
-        )
-
-    # Prefer the spec field; fall back to Lyft's extension where absent.
-    spec_counts = None
-    if "vehicle_types_available" in status.columns and electric_ids:
-        spec_counts = status["vehicle_types_available"].map(
-            lambda v: count_electric(v, electric_ids)
-        )
-    extension = (
-        pd.to_numeric(status["num_ebikes_available"], errors="coerce")
-        if "num_ebikes_available" in status.columns
-        else None
-    )
-    if spec_counts is not None and extension is not None:
-        out["num_ebikes_available"] = spec_counts.fillna(extension)
-    elif spec_counts is not None:
-        out["num_ebikes_available"] = spec_counts
-    elif extension is not None:
-        out["num_ebikes_available"] = extension
-    else:
-        out["num_ebikes_available"] = None
-
-    for column in ("is_installed", "is_renting", "is_returning"):
-        out[column] = (
-            status[column].map(as_int_flag) if column in status.columns else None
-        )
-    out["last_reported"] = (
-        pd.to_numeric(status["last_reported"], errors="coerce")
-        if "last_reported" in status.columns
-        else None
-    )
-    out["ts"] = ts
-    return out
-
-
-def bike_status_frame(client: GbfsClient, ts: datetime) -> pd.DataFrame:
-    """
-    Current free-floating vehicles.
-
-    GBFS asks publishers to rotate ``bike_id`` between trips for privacy,
-    so these identifiers cannot be used to follow a vehicle over time.
-    """
-    if not client.has_feed("free_bike_status"):
-        return pd.DataFrame(columns=BIKE_COLUMNS)
-    bikes = client.load_feed_data("free_bike_status", "bikes")
-    if bikes.empty:
-        return pd.DataFrame(columns=BIKE_COLUMNS)
-
-    out = pd.DataFrame({"bike_id": bikes["bike_id"].astype(str)})
-    out["lat"] = pd.to_numeric(bikes.get("lat"), errors="coerce").round(5)
-    out["lon"] = pd.to_numeric(bikes.get("lon"), errors="coerce").round(5)
-    for column in ("is_reserved", "is_disabled"):
-        out[column] = (
-            bikes[column].map(as_int_flag) if column in bikes.columns else None
-        )
-    out["vehicle_type_id"] = (
-        bikes["vehicle_type_id"].astype(str)
-        if "vehicle_type_id" in bikes.columns
-        else None
-    )
-    out["current_range_meters"] = pd.to_numeric(
-        bikes.get("current_range_meters"), errors="coerce"
-    )
-    out["last_reported"] = (
-        pd.to_numeric(bikes["last_reported"], errors="coerce")
-        if "last_reported" in bikes.columns
-        else None
-    )
-    out["ts"] = ts
-    return out
-
-
 def collect_snapshot(conn: Db, client: GbfsClient | None = None) -> dict:
-    """Fetch and store one snapshot. Returns the hour and rows written."""
+    """
+    Fetch and store one snapshot of every status feed.
+
+    Returns the hour and the rows newly written per table — zero everywhere if
+    the hour was already stored.
+    """
     client = client or GbfsClient()
-    ts = snapshot_hour()
-    stations = station_status_frame(client, ts)
-    bikes = bike_status_frame(client, ts)
-    station_rows = conn.insert_ignore(
-        "station_status", STATION_COLUMNS, rows_from_frame(stations, STATION_COLUMNS)
-    )
-    bike_rows = conn.insert_ignore(
-        "bike_status", BIKE_COLUMNS, rows_from_frame(bikes, BIKE_COLUMNS)
-    )
-    return {
-        "timestamp": ts.strftime(TIMESTAMP_FORMAT),
-        "station_rows": station_rows,
-        "bike_rows": bike_rows,
+    ts = snapshot_hour(resolve_timezone(conn, client))
+    status = client.station_status()
+    frames = {
+        "station_status": status.stations,
+        "station_vehicle_types_available": status.vehicle_types_available,
+        "station_vehicle_docks_available": status.vehicle_docks_available,
+        "vehicle_status": client.vehicle_status(),
     }
+    written = {
+        name: _append(conn, name, frame, ts) for name, frame in frames.items()
+    }
+    return {"timestamp": ts.strftime(TIMESTAMP_FORMAT), "rows": written}
+
+
+def _append(conn: Db, name: str, frame: pd.DataFrame, ts: datetime) -> int:
+    """Stamp a normalized frame with the snapshot hour and store it."""
+    columns = table(name).column_names
+    if frame.empty:
+        return 0
+    return conn.insert_ignore(
+        name, columns, rows_from_frame(frame.assign(ts=ts), columns)
+    )
 
 
 # --- reference data ---------------------------------------------------------
 
 
-def refresh_stations(conn: Db, client: GbfsClient) -> int:
+def refresh_reference_data(
+    conn: Db, client: GbfsClient, observed_at: datetime | None = None
+) -> dict[str, dict[str, int]]:
     """
-    Upsert station metadata joined with its region name.
+    Re-read everything that changes more slowly than the status feeds.
 
-    Systems that are entirely free-floating publish an empty
-    ``station_information`` feed, which is valid GBFS and not an error.
+    Each tracked table keeps its current state and gains a log row only where
+    something actually differs, and the geofencing collection only writes when
+    its content changed — so running this hourly costs nothing when nothing did.
     """
-    st_info = client.load_feed_data("station_information", "stations")
-    if st_info.empty:
-        return 0
+    observed_at = observed_at or datetime.now()
+    system = client.system_information()
+    fields = [field.name for field in SYSTEM_INFORMATION_FIELDS]
+    results = {
+        "system_information": conn.sync(
+            "system_information",
+            (*fields, "gbfs_version", "feeds_url"),
+            [tuple(system.get(name) for name in (*fields, "gbfs_version", "feeds_url"))]
+            if system.get("system_id")
+            else [],
+            observed_at,
+        )
+    }
+    for name, accessor in REFERENCE_FEEDS.items():
+        frame = getattr(client, accessor)()
+        columns = table(name).column_names
+        results[name] = conn.sync(
+            name, columns, rows_from_frame(frame, columns), observed_at
+        )
+    results["geofencing_zones"] = refresh_geofencing(conn, client, observed_at)
+    return results
 
-    for column in ("station_id", "name", "short_name", "region_id", "capacity", "lat", "lon"):
-        if column not in st_info.columns:
-            st_info[column] = None
-    st_info = st_info[
-        ["station_id", "name", "short_name", "region_id", "capacity", "lat", "lon"]
-    ].drop_duplicates(subset=["station_id"])
 
-    stations = st_info
-    if client.has_feed("system_regions"):
-        regions = client.load_feed_data("system_regions", "regions")
-        if not regions.empty:
-            regions = regions.drop_duplicates(subset=["region_id"])
-            stations = pd.merge(
-                st_info,
-                regions[["region_id", "name"]].rename(columns={"name": "region"}),
-                on="region_id",
-                how="left",
-            )
-    if "region" not in stations.columns:
-        stations["region"] = None
+def refresh_geofencing(
+    conn: Db, client: GbfsClient, observed_at: datetime
+) -> dict:
+    """
+    Archive the geofencing collection as a GeoJSON document when it changed.
 
-    stations["lat"] = pd.to_numeric(stations["lat"], errors="coerce").round(5)
-    stations["lon"] = pd.to_numeric(stations["lon"], errors="coerce").round(5)
-
-    conn.upsert(
-        "stations",
-        STATION_REF_COLUMNS,
-        rows_from_frame(stations, STATION_REF_COLUMNS),
-        conflict=["station_id"],
+    Zones have no ids in GBFS, so nothing is tracked entity by entity: each
+    version of the whole collection is one standalone ``.geojson`` file in the
+    lake, and the newest file is current. An absent feed is a no-op; a
+    present-but-empty collection is authoritative — a system that deleted all
+    its zones really has none, and recording that is a version like any other.
+    See :mod:`lastmile.geofencing`.
+    """
+    data = client.geofencing_zones()
+    written = data is not None and geofencing.record(
+        conn.root, geofencing.document(data), observed_at
     )
-    return len(stations)
-
-
-def refresh_vehicle_types(conn: Db, client: GbfsClient) -> int:
-    """
-    Upsert the ``vehicle_types`` feed.
-
-    Needed to interpret ``vehicle_type_id`` and to count e-bikes the way the
-    spec intends, rather than relying on Lyft's ``num_ebikes_available``.
-    """
-    types = client.vehicle_types()
-    if types.empty:
-        return 0
-    conn.upsert(
-        "vehicle_types",
-        VEHICLE_TYPE_COLUMNS,
-        rows_from_frame(types, VEHICLE_TYPE_COLUMNS),
-        conflict=["vehicle_type_id"],
-    )
-    return len(types)
+    return {**geofencing.summary(conn.root), "captured": written}
 
 
 def init_db(conn: Db, client: GbfsClient | None = None) -> dict:
-    """Create the schema and load reference data. Safe to run repeatedly."""
+    """Lay out the lake and load reference data. Safe to run repeatedly."""
     create_all(conn)
     client = client or GbfsClient()
-    return {
-        "stations": refresh_stations(conn, client),
-        "vehicle_types": refresh_vehicle_types(conn, client),
-    }
+    return refresh_reference_data(conn, client)
 
 
 def is_initialized(conn: Db) -> bool:
-    """True when the schema exists and station metadata is loaded."""
-    for table in ("stations", "station_status", "bike_status"):
-        if not conn.has_table(table):
+    """
+    True when the datasets exist and reference data has been loaded.
+
+    ``system_information`` is the signal rather than the station tables, because
+    an entirely free-floating system legitimately has none of those.
+    """
+    for name in ("system_information", *HOURLY_TABLES):
+        if not conn.has_table(name):
             return False
-    return conn.count("stations") > 0
+    return conn.count("system_information") > 0

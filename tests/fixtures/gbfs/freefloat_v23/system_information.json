@@ -1,0 +1,12 @@
+{
+  "data": {
+    "email": "support@example.org",
+    "language": "en",
+    "name": "Riverside Scooters",
+    "system_id": "riverside",
+    "timezone": "America/Chicago"
+  },
+  "last_updated": 1793295369,
+  "ttl": 0,
+  "version": "2.3"
+}

@@ -1,27 +1,35 @@
 """
 Read-only query helpers.
 
-Runs through :mod:`lastmile.db`, and is written to stay dialect-neutral: the
-engine-specific spellings live in that module's SQL fragments, so this layer
-should survive the move to DuckDB untouched. Snapshot hours are stored as a real
-``ts`` column but cross this module's public API as ``YYYY-MM-DD-HH:00``
-strings, which is what the app, its cache keys, and the metric layer already
-speak.
+Runs through :mod:`lastmile.db`, against the DuckDB views over the Parquet lake.
+Engine-specific spellings live in that module's SQL fragments rather than inline
+here. Snapshot hours are stored as a real ``ts`` column but cross this module's
+public API as ``YYYY-MM-DD-HH:00`` strings, which is what the app, its cache
+keys, and the metric layer already speak.
 
-``station_status`` is now keyed on ``(station_id, ts)``, so a snapshot hour
-holds exactly one row per station. The aggregate queries used to defend against
-duplicates with an inner ``GROUP BY``/``MAX`` pass; that is no longer needed and
-the queries are correspondingly cheaper.
+Columns are the GBFS 3.0 ones (``num_vehicles_available``, ``vehicle_id``), and
+so are the frames these return where they project a stored column straight
+through. Aggregate aliases are the metric layer's own vocabulary
+(``bikes_available``, ``free_floating``) and are not spec names.
+
+Two joins recur. Region names live in ``system_regions`` rather than denormalized
+onto each station, so station queries join through ``region_id``. And electric
+availability is not a stored column — GBFS has no such field — so it is summed
+from ``station_vehicle_types_available`` against ``vehicle_types.propulsion_type``.
+
+``station_status`` is keyed on ``(station_id, ts)``, so a snapshot hour holds
+exactly one row per station; the aggregates need no de-duplication pass.
 """
 
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from ..constants import FREE_FLOATING_REGION, TIMESTAMP_FORMAT
+from ..constants import ELECTRIC_PROPULSION, FREE_FLOATING_REGION, TIMESTAMP_FORMAT
 from ..settings import get_settings
 from . import (
     Db,
@@ -33,51 +41,124 @@ from . import (
     to_dt,
     to_key,
 )
-from .schema import ensure_indexes as _ensure_indexes
+
+#: Stations with their region name attached. Always aliased ``s`` / ``r``.
+STATIONS = (
+    "station_information s "
+    "LEFT JOIN system_regions r ON r.region_id = s.region_id"
+)
+#: The region label every breakdown groups by.
+REGION = "COALESCE(r.name, 'Unknown')"
+
+_ELECTRIC = ", ".join(f"'{value}'" for value in ELECTRIC_PROPULSION)
+
+
+def _electric_cte(clauses: list[str]) -> str:
+    """
+    Per station-hour electric availability, as a CTE named ``electric``.
+
+    ``clauses`` are time filters written against ``a.ts``; passing the same
+    window the outer query uses keeps this from scanning the whole history.
+    """
+    where = " AND ".join([f"vt.propulsion_type IN ({_ELECTRIC})", *clauses])
+    return f"""
+        electric AS (
+            SELECT a.station_id AS station_id, a.ts AS ts,
+                   SUM(a.count) AS n_electric
+            FROM station_vehicle_types_available a
+            INNER JOIN vehicle_types vt
+                ON vt.vehicle_type_id = a.vehicle_type_id
+            WHERE {where}
+            GROUP BY a.station_id, a.ts
+        )"""
 
 
 def _status_counts(prefix: str = "") -> str:
     """
     Four mutually exclusive station states.
 
-    Ordered so they sum to the station count: a station with neither bikes nor
-    docks is counted empty, not both.
+    Ordered so they sum to the station count: a station with neither vehicles
+    nor docks is counted empty, not both.
     """
-    bikes = f"{prefix}num_bikes_available"
+    vehicles = f"{prefix}num_vehicles_available"
     docks = f"{prefix}num_docks_available"
-    share = real_cast(bikes)
+    share = real_cast(vehicles)
     low_share = get_settings().low_station_bike_share
     return f"""
-            SUM(CASE WHEN {bikes} = 0 THEN 1 ELSE 0 END)
+            SUM(CASE WHEN {vehicles} = 0 THEN 1 ELSE 0 END)
                 AS empty_stations,
-            SUM(CASE WHEN {bikes} > 0 AND {docks} = 0
+            SUM(CASE WHEN {vehicles} > 0 AND {docks} = 0
                      THEN 1 ELSE 0 END) AS full_stations,
-            SUM(CASE WHEN {bikes} > 0 AND {docks} > 0
-                      AND {share} / ({bikes} + {docks})
+            SUM(CASE WHEN {vehicles} > 0 AND {docks} > 0
+                      AND {share} / ({vehicles} + {docks})
                           < {low_share}
                      THEN 1 ELSE 0 END) AS low_stations,
-            SUM(CASE WHEN {bikes} > 0 AND {docks} > 0
-                      AND {share} / ({bikes} + {docks})
+            SUM(CASE WHEN {vehicles} > 0 AND {docks} > 0
+                      AND {share} / ({vehicles} + {docks})
                           >= {low_share}
                      THEN 1 ELSE 0 END) AS healthy_stations"""
 
 
-def ensure_indexes(conn: Db) -> None:
-    """Create indexes used by dashboard historical queries."""
-    _ensure_indexes(conn)
+# --- the system ------------------------------------------------------------
+
+SYSTEM_FIELDS = (
+    "system_id",
+    "name",
+    "short_name",
+    "operator",
+    "timezone",
+    "languages",
+    "url",
+    "gbfs_version",
+    "feeds_url",
+)
+
+
+def get_system_info(conn: Db) -> dict | None:
+    """What the collected system says about itself, or None before init-db."""
+    if not conn.has_table("system_information"):
+        return None
+    row = conn.fetchone(
+        f"SELECT {', '.join(SYSTEM_FIELDS)} FROM system_information LIMIT 1"
+    )
+    return dict(zip(SYSTEM_FIELDS, row)) if row else None
+
+
+def stored_timezone(conn: Db) -> str | None:
+    """The collected system's timezone, as recorded by the last init/refresh."""
+    info = get_system_info(conn) or {}
+    return info.get("timezone") or None
+
+
+def get_reference_changes(conn: Db, table: str, limit: int = 50) -> pd.DataFrame:
+    """
+    Recent entries from a tracked table's change log, newest first.
+
+    Tracked tables store current state plus a log, so this is where "when did
+    this station's capacity change" is answered.
+    """
+    log = f"{table}_log"
+    if not conn.has_table(log):
+        return pd.DataFrame()
+    return conn.read_sql(
+        f"SELECT * FROM {log} ORDER BY observed_at DESC LIMIT ?", (limit,)
+    )
 
 
 def list_regions(conn: Db) -> list[str]:
     """Distinct station regions, most stations first."""
     rows = conn.fetchall(
-        """
-        SELECT COALESCE(region, 'Unknown') AS region, COUNT(*) AS n
-        FROM stations
-        GROUP BY region
+        f"""
+        SELECT {REGION} AS region, COUNT(*) AS n
+        FROM {STATIONS}
+        GROUP BY {REGION}
         ORDER BY n DESC
         """
     )
     return [row[0] for row in rows if row[0]]
+
+
+# --- what exists -----------------------------------------------------------
 
 
 def get_latest_timestamp(conn: Db) -> str | None:
@@ -139,11 +220,16 @@ def cutoff_timestamp(
     return start.strftime(TIMESTAMP_FORMAT)
 
 
+# --- snapshots -------------------------------------------------------------
+
+
 def get_station_snapshot_at(conn: Db, timestamp: str) -> pd.DataFrame:
     """Stations joined with station_status for a specific hourly timestamp."""
     key = key_expr("st.ts")
+    moment = to_dt(timestamp)
     return conn.read_sql(
         f"""
+        WITH {_electric_cte(["a.ts = ?"])}
         SELECT
             s.station_id,
             s.name,
@@ -152,21 +238,23 @@ def get_station_snapshot_at(conn: Db, timestamp: str) -> pd.DataFrame:
             s.capacity,
             s.lat,
             s.lon,
-            s.region,
-            st.num_bikes_available,
+            {REGION} AS region,
+            st.num_vehicles_available,
             st.num_docks_available,
-            st.num_ebikes_available,
+            COALESCE(e.n_electric, 0) AS num_vehicles_available_electric,
             st.num_docks_disabled,
-            st.num_bikes_disabled,
+            st.num_vehicles_disabled,
             st.is_renting,
             st.is_installed,
             {key} AS timestamp
-        FROM stations s
-        INNER JOIN station_status st
+        FROM station_status st
+        INNER JOIN {STATIONS}
             ON s.station_id = st.station_id
+        LEFT JOIN electric e
+            ON e.station_id = st.station_id AND e.ts = st.ts
         WHERE st.ts = ?
         """,
-        (to_dt(timestamp),),
+        (moment, moment),
     )
 
 
@@ -244,28 +332,28 @@ def get_problematic_stations(
         SELECT
             s.station_id,
             s.name AS name,
-            COALESCE(s.region, 'Unknown') AS region,
+            {REGION} AS region,
             SUM(
                 CASE
-                    WHEN st.num_bikes_available = 0
+                    WHEN st.num_vehicles_available = 0
                       OR st.num_docks_available = 0
                     THEN 1 ELSE 0
                 END
             ) AS hours_problematic,
             SUM(
-                CASE WHEN st.num_bikes_available = 0 THEN 1 ELSE 0 END
+                CASE WHEN st.num_vehicles_available = 0 THEN 1 ELSE 0 END
             ) AS hours_empty,
             SUM(
                 CASE WHEN st.num_docks_available = 0 THEN 1 ELSE 0 END
             ) AS hours_full
         FROM station_status st
-        INNER JOIN stations s
+        INNER JOIN {STATIONS}
             ON s.station_id = st.station_id
         WHERE st.ts IN ({placeholders})
-        GROUP BY s.station_id, s.name, COALESCE(s.region, 'Unknown')
+        GROUP BY s.station_id, s.name, {REGION}
         HAVING SUM(
             CASE
-                WHEN st.num_bikes_available = 0
+                WHEN st.num_vehicles_available = 0
                   OR st.num_docks_available = 0
                 THEN 1 ELSE 0
             END
@@ -376,12 +464,15 @@ def _attach_backup_stations(
     return out
 
 
+# --- free-floating vehicles ------------------------------------------------
+
+
 def get_free_bike_counts(
     conn: Db,
     timestamp: str,
     low_range_meters: int = 5000,
 ) -> dict[str, int]:
-    """Counts from free_bike_status / bike_status for a snapshot hour."""
+    """Counts from vehicle_status for a snapshot hour."""
     row = conn.fetchone(
         """
         SELECT
@@ -395,7 +486,7 @@ def get_free_bike_counts(
                     THEN 1 ELSE 0
                 END
             ) AS low_range
-        FROM bike_status
+        FROM vehicle_status
         WHERE ts = ?
         """,
         (low_range_meters, to_dt(timestamp)),
@@ -413,9 +504,9 @@ def get_free_bike_counts(
 def get_free_bike_snapshot(
     conn: Db, timestamp: str | None = None
 ) -> pd.DataFrame:
-    """Free-range bike locations for a snapshot hour (defaults to latest)."""
+    """Free-floating vehicle locations for a snapshot hour (defaults to latest)."""
     if timestamp is None:
-        row = conn.fetchone("SELECT MAX(ts) FROM bike_status")
+        row = conn.fetchone("SELECT MAX(ts) FROM vehicle_status")
         timestamp = to_key(row[0]) if row and row[0] is not None else None
     if timestamp is None:
         return pd.DataFrame()
@@ -424,31 +515,34 @@ def get_free_bike_snapshot(
     return conn.read_sql(
         f"""
         SELECT
-            bike_id,
+            vehicle_id,
             lat,
             lon,
             is_reserved,
             is_disabled,
             vehicle_type_id,
             current_range_meters,
+            current_fuel_percent,
             {key} AS timestamp
-        FROM bike_status
+        FROM vehicle_status
         WHERE ts = ?
         """,
         (to_dt(timestamp),),
     )
 
 
+# --- history ---------------------------------------------------------------
+
+
 def _time_filters(
-    conn: Db,
     column: str,
     since: str | None,
     until: str | None,
     hour_of_day: str | None,
-) -> tuple[list[str], list]:
+) -> tuple[list[str], list[Any]]:
     """Shared WHERE fragments for the history queries."""
     clauses: list[str] = []
-    params: list = []
+    params: list[Any] = []
     if since is not None:
         clauses.append(f"{column} >= ?")
         params.append(to_dt(since))
@@ -471,33 +565,40 @@ def get_availability_timeseries(
     """
     Docked availability aggregated by hourly timestamp.
 
-    ``num_bikes_available`` in GBFS already includes e-bikes, so the classic
-    count is the difference; reporting both alongside the total would double
-    count. ``bikes_available`` stays the docked total for existing callers.
+    ``num_vehicles_available`` in GBFS already includes electric vehicles, so
+    the classic count is the difference; reporting both alongside the total
+    would double count. ``bikes_available`` stays the docked total for existing
+    callers.
     """
-    clauses, params = _time_filters(conn, "st.ts", since, until, hour_of_day)
+    # The CTE is bound first because it appears first in the statement, and it
+    # repeats the time window so it does not scan the whole breakdown table.
+    inner_clauses, inner_params = _time_filters("a.ts", since, until, hour_of_day)
+    clauses, params = _time_filters("st.ts", since, until, hour_of_day)
     if region is not None:
-        clauses.append("COALESCE(s.region, 'Unknown') = ?")
+        clauses.append(f"{REGION} = ?")
         params.append(region)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     key = key_expr("st.ts")
     df = conn.read_sql(
         f"""
+        WITH {_electric_cte(inner_clauses)}
         SELECT
             {key} AS timestamp,
-            SUM(st.num_bikes_available) AS bikes_available,
-            SUM(st.num_ebikes_available) AS ebikes_available,
+            SUM(st.num_vehicles_available) AS bikes_available,
+            SUM(COALESCE(e.n_electric, 0)) AS ebikes_available,
             SUM(st.num_docks_available) AS docks_available,
             {_status_counts("st.")},
             COUNT(*) AS station_count
         FROM station_status st
-        INNER JOIN stations s ON s.station_id = st.station_id
+        INNER JOIN {STATIONS} ON s.station_id = st.station_id
+        LEFT JOIN electric e
+            ON e.station_id = st.station_id AND e.ts = st.ts
         {where}
         GROUP BY st.ts
         ORDER BY st.ts
         """,
-        params,
+        [*inner_params, *params],
     )
     if df.empty:
         return df
@@ -515,23 +616,22 @@ def get_free_bike_timeseries(
     hour_of_day: str | None = None,
 ) -> pd.DataFrame:
     """
-    Free-floating bike count per hourly timestamp.
+    Free-floating vehicle count per hourly timestamp.
 
-    Free bikes carry no region in GBFS, only coordinates. They are treated as
-    San Francisco inventory, which is where practically all of them sit, so
-    region breakdowns need no spatial join.
+    Free-floating vehicles carry no region in GBFS, only coordinates, so they
+    are all attributed to one region rather than spatially joined.
     """
     if region is not None and region != FREE_FLOATING_REGION:
         return pd.DataFrame(columns=["timestamp", "free_floating"])
 
-    clauses, params = _time_filters(conn, "ts", since, until, hour_of_day)
+    clauses, params = _time_filters("ts", since, until, hour_of_day)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     key = key_expr("ts")
     return conn.read_sql(
         f"""
         SELECT {key} AS timestamp, COUNT(*) AS free_floating
-        FROM bike_status
+        FROM vehicle_status
         {where}
         GROUP BY ts
         ORDER BY ts
@@ -565,12 +665,12 @@ def get_problematic_timeseries(
         _shift_timestamp(since, -(lookback_hours - 1)) if since is not None else None
     )
     clauses: list[str] = []
-    params: list = []
+    params: list[Any] = []
     if pad_since is not None:
         clauses.append("st.ts >= ?")
         params.append(to_dt(pad_since))
     if region is not None:
-        clauses.append("COALESCE(s.region, 'Unknown') = ?")
+        clauses.append(f"{REGION} = ?")
         params.append(region)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
@@ -580,10 +680,10 @@ def get_problematic_timeseries(
         SELECT
             {key} AS timestamp,
             st.station_id AS station_id,
-            CASE WHEN st.num_bikes_available = 0 THEN 1 ELSE 0 END AS is_empty,
+            CASE WHEN st.num_vehicles_available = 0 THEN 1 ELSE 0 END AS is_empty,
             CASE WHEN st.num_docks_available = 0 THEN 1 ELSE 0 END AS is_full
         FROM station_status st
-        INNER JOIN stations s ON s.station_id = st.station_id
+        INNER JOIN {STATIONS} ON s.station_id = st.station_id
         {where}
         """,
         params,
@@ -634,16 +734,16 @@ def get_station_reliability(
     """
     Share of observed hours each station spent empty or full.
 
-    Empty takes precedence over full for the rare hour with neither bikes nor
-    docks, matching how the states are counted everywhere else.
+    Empty takes precedence over full for the rare hour with neither vehicles
+    nor docks, matching how the states are counted everywhere else.
     """
     clauses: list[str] = []
-    params: list = []
+    params: list[Any] = []
     if since is not None:
         clauses.append("st.ts >= ?")
         params.append(to_dt(since))
     if region is not None:
-        clauses.append("COALESCE(s.region, 'Unknown') = ?")
+        clauses.append(f"{REGION} = ?")
         params.append(region)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(min_hours)
@@ -653,18 +753,18 @@ def get_station_reliability(
         SELECT
             st.station_id AS station_id,
             s.name AS name,
-            COALESCE(s.region, 'Unknown') AS region,
+            {REGION} AS region,
             s.capacity AS capacity,
             COUNT(*) AS hours,
-            SUM(CASE WHEN st.num_bikes_available = 0 THEN 1 ELSE 0 END)
+            SUM(CASE WHEN st.num_vehicles_available = 0 THEN 1 ELSE 0 END)
                 AS hours_empty,
-            SUM(CASE WHEN st.num_bikes_available > 0
+            SUM(CASE WHEN st.num_vehicles_available > 0
                       AND st.num_docks_available = 0
                      THEN 1 ELSE 0 END) AS hours_full
         FROM station_status st
-        INNER JOIN stations s ON s.station_id = st.station_id
+        INNER JOIN {STATIONS} ON s.station_id = st.station_id
         {where}
-        GROUP BY st.station_id, s.name, COALESCE(s.region, 'Unknown'), s.capacity
+        GROUP BY st.station_id, s.name, {REGION}, s.capacity
         HAVING COUNT(*) >= ?
         """,
         params,
@@ -682,8 +782,8 @@ def avg_distance_to_nearest_station_m(
     free_bikes: pd.DataFrame,
 ) -> float | None:
     """
-    Average haversine distance (meters) from each free-floating bike
-    to its nearest station. Vectorized; cheap at Bay Wheels scale.
+    Average haversine distance (meters) from each free-floating vehicle
+    to its nearest station. Vectorized.
     """
 
     if stations.empty or free_bikes.empty:

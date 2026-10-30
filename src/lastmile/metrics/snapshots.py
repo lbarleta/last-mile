@@ -18,3 +18,11 @@ class SnapshotMetrics(BaseMetric):
     def list_regions(self) -> list[str]:
         """Station regions available for filtering."""
         return queries.list_regions(self.conn)
+
+    def get_timestamp_bounds(self) -> tuple[str | None, str | None]:
+        """First and last snapshot hour held, for the header's date range."""
+        return queries.get_timestamp_bounds(self.conn)
+
+    def get_system_info(self) -> dict | None:
+        """What the collected system publishes about itself."""
+        return queries.get_system_info(self.conn)

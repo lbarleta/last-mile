@@ -66,7 +66,7 @@ def _collect_points(
     points: list[LatLon] = []
 
     if stations is not None and not stations.empty:
-        with_bikes = stations[stations["num_bikes_available"] > 0].copy()
+        with_bikes = stations[stations["num_vehicles_available"] > 0].copy()
         with_bikes["lat"] = pd.to_numeric(with_bikes["lat"], errors="coerce")
         with_bikes["lon"] = pd.to_numeric(with_bikes["lon"], errors="coerce")
         with_bikes = with_bikes.dropna(subset=["lat", "lon"])

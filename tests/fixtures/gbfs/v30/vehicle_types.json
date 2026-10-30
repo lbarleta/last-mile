@@ -1,0 +1,102 @@
+{
+  "data": {
+    "vehicle_types": [
+      {
+        "default_pricing_plan_id": "182",
+        "form_factor": "bicycle",
+        "max_range_meters": 0.0,
+        "name": [
+          {
+            "language": "en",
+            "text": "ICONIC"
+          },
+          {
+            "language": "fr",
+            "text": "ICONIC"
+          },
+          {
+            "language": "nl",
+            "text": "ICONIC"
+          },
+          {
+            "language": "es",
+            "text": "ICONIC"
+          }
+        ],
+        "pricing_plan_ids": [
+          "182",
+          "183",
+          "184",
+          "185"
+        ],
+        "propulsion_type": "human",
+        "vehicle_type_id": "ICONIC"
+      },
+      {
+        "default_pricing_plan_id": "182",
+        "form_factor": "bicycle",
+        "max_range_meters": 0.0,
+        "name": [
+          {
+            "language": "en",
+            "text": "EFIT"
+          },
+          {
+            "language": "fr",
+            "text": "EFIT"
+          },
+          {
+            "language": "nl",
+            "text": "EFIT"
+          },
+          {
+            "language": "es",
+            "text": "EFIT"
+          }
+        ],
+        "pricing_plan_ids": [
+          "182",
+          "183",
+          "184",
+          "185"
+        ],
+        "propulsion_type": "electric_assist",
+        "vehicle_type_id": "EFIT"
+      },
+      {
+        "default_pricing_plan_id": "182",
+        "form_factor": "scooter_standing",
+        "max_range_meters": 0.0,
+        "name": [
+          {
+            "language": "en",
+            "text": "CHLOE"
+          },
+          {
+            "language": "fr",
+            "text": "CHLOE"
+          },
+          {
+            "language": "nl",
+            "text": "CHLOE"
+          },
+          {
+            "language": "es",
+            "text": "CHLOE"
+          }
+        ],
+        "pricing_plan_ids": [
+          "182",
+          "183",
+          "184",
+          "185"
+        ],
+        "propulsion_type": "electric",
+        "vehicle_type_id": "CHLOE"
+      }
+    ]
+  },
+  "last_updated": "2026-10-29T19:48:01Z",
+  "ttl": 30,
+  "version": "3.0"
+}

@@ -1,0 +1,22 @@
+{
+  "data": {
+    "email": "support@example.org",
+    "languages": ["en", "es"],
+    "name": [
+      {
+        "language": "en",
+        "text": "Riverside Scooters"
+      },
+      {
+        "language": "es",
+        "text": "Patinetes Riverside"
+      }
+    ],
+    "opening_hours": "Mo-Su 00:00-24:00",
+    "system_id": "riverside",
+    "timezone": "America/Chicago"
+  },
+  "last_updated": "2026-10-29T17:36:09Z",
+  "ttl": 30,
+  "version": "3.0"
+}

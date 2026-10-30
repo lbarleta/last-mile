@@ -8,7 +8,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from lastmile.constants import TIMESTAMP_FORMAT
-from lastmile.db import Db, as_url, make_engine, resolve_database_url
+from lastmile.db import Db, as_path
 from lastmile.metrics import Metrics
 from lastmile.settings import get_settings
 
@@ -38,17 +38,15 @@ def format_hour(hour: int) -> str:
     return f"{hour % 12 or 12} {suffix}"
 
 
-def resolve_db_path() -> str | None:
+def resolve_lake_path() -> str | None:
     """
-    Database URL from the environment, or None when it is not configured.
+    The configured lake directory, or None when it has not been created yet.
 
-    Anything beyond "is it set" is left to fail at connection time with the
-    server's own message.
+    There is nothing to connect to and nothing to fail later: either the
+    directory is there or `lastmile init-db` has not run.
     """
-    try:
-        return resolve_database_url()
-    except RuntimeError:
-        return None
+    path = as_path(None)
+    return str(path) if path.is_dir() else None
 
 
 def inject_umami() -> None:
@@ -199,13 +197,21 @@ def apply_layout_styles() -> None:
 
 
 @st.cache_resource
-def get_engine(db_path: str):
-    return make_engine(as_url(db_path))
+def get_connection(lake_path: str) -> Db:
+    """
+    One DuckDB handle per app process, shared by every session.
+
+    It is in-memory and holds no lock on the lake, so the hourly collector keeps
+    writing underneath it, and each query runs on its own cursor. Views
+    re-resolve their file glob per query, so new snapshots appear without a
+    restart.
+    """
+    return Db(lake_path)
 
 
-def get_metrics(db_path: str) -> Metrics:
-    return Metrics(conn=Db(get_engine(db_path)))
+def get_metrics(lake_path: str) -> Metrics:
+    return Metrics(conn=get_connection(lake_path))
 
 
 def clear_caches() -> None:
-    get_engine.clear()
+    get_connection.clear()

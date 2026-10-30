@@ -5,20 +5,27 @@
 # environment variable named LASTMILE_<KEY>, so secrets belong in .env rather
 # than here:
 #
-#   database_url      ->  LASTMILE_DATABASE_URL
+#   lake_path         ->  LASTMILE_LAKE_PATH
 #   coverage_radius_m ->  LASTMILE_COVERAGE_RADIUS_M
 #
 # Relative paths resolve against the directory holding this file.
 
-# --- database ---------------------------------------------------------------
-# Intentionally blank: set LASTMILE_DATABASE_URL in .env instead of committing
-# credentials. Example: mysql://user:password@host:3306/lastmile
-database_url = ""
+# --- warehouse ---------------------------------------------------------------
+# Directory holding the Parquet data lake. DuckDB reads it in-process, so there
+# is no server and nothing to configure beyond where the files go. Back it up or
+# move it to another host by copying the directory.
+lake_path = "data/lake"
 
 # --- GBFS feed ---------------------------------------------------------------
-feeds_url = "https://gbfs.baywheels.com/gbfs/2.3/gbfs.json"
+# Any system's discovery document, on spec 2.3 or 3.x. The 3.0 feed is preferred
+# where a publisher offers both.
+feeds_url = "https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
+# Language used to pick localized names out of a 3.x feed, and to choose the
+# language block on a 2.x discovery document.
 feeds_lang = "en"
-timezone = "America/Los_Angeles"
+# Zone the hourly snapshot key is bucketed in. Leave blank to use the system's
+# own system_information.timezone, which is what keeps this feed-agnostic.
+timezone = ""
 request_timeout_s = 30
 
 # --- metrics -----------------------------------------------------------------
@@ -48,39 +55,6 @@ coverage_radius_m = 300
 boundary_geojson = "assets/sf_county_boundary.geojson"
 # Projected CRS used for buffering; EPSG:3310 is California Albers (meters).
 projected_crs = "EPSG:3310"
-
-# --- weather (under development) ----------------------------------------------
-# One grid point for the city: SF's footprint is well below ERA5 resolution.
-weather_lat = 37.7749
-weather_lon = -122.4194
-weather_archive_url = "https://archive-api.open-meteo.com/v1/archive"
-weather_forecast_url = "https://api.open-meteo.com/v1/forecast"
-# ERA5 reanalysis lags real time by ~5 days; the forecast endpoint covers the gap.
-weather_archive_lag_days = 6
-weather_variables = [
-    "temperature_2m",
-    "precipitation",
-    "wind_speed_10m",
-    "relative_humidity_2m",
-    "cloud_cover",
-]
-
-# --- stockout forecasting (under development) ----------------------------------
-# Hours ahead to predict stockouts for.
-forecast_horizons = [1, 2, 3, 4, 5, 6]
-# Lags (hours) of a station's own occupancy used as model inputs.
-forecast_lag_hours = [1, 2, 3, 6, 12, 24, 168]
-# Trailing window for the same-station / same-hour stockout rate.
-forecast_climatology_days = 28
-# History loaded before a window so lag features are populated on its first hour.
-forecast_warmup_days = 30
-# How much history to feed the trainer; 0 means everything available.
-forecast_train_days = 180
-# Cap on training rows (station-hours x horizons) to keep fits in memory.
-forecast_max_train_rows = 1200000
-forecast_model_path = "data/forecast_model.joblib"
-# Probability at or above which a station is flagged at risk in the UI.
-forecast_risk_threshold = 0.5
 
 # --- dashboard -----------------------------------------------------------------
 dashboard_title = "Last Mile"

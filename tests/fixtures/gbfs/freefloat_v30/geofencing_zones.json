@@ -1,0 +1,66 @@
+{
+  "data": {
+    "geofencing_zones": {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "MultiPolygon",
+            "coordinates": [[[[-97.741, 30.272], [-97.735, 30.272], [-97.735, 30.268], [-97.741, 30.268], [-97.741, 30.272]]]]
+          },
+          "properties": {
+            "name": [
+              {
+                "language": "en",
+                "text": "Downtown slow zone"
+              }
+            ],
+            "start": "2026-10-29T17:35:00Z",
+            "rules": [
+              {
+                "vehicle_type_ids": ["scooter"],
+                "ride_start_allowed": true,
+                "ride_end_allowed": true,
+                "ride_through_allowed": true,
+                "maximum_speed_kph": 15
+              }
+            ]
+          }
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "MultiPolygon",
+            "coordinates": [[[[-97.75, 30.28], [-97.746, 30.28], [-97.746, 30.276], [-97.75, 30.276], [-97.75, 30.28]]]]
+          },
+          "properties": {
+            "name": [
+              {
+                "language": "en",
+                "text": "Riverside no-parking"
+              }
+            ],
+            "rules": [
+              {
+                "ride_start_allowed": false,
+                "ride_end_allowed": false,
+                "ride_through_allowed": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "global_rules": [
+      {
+        "ride_start_allowed": true,
+        "ride_end_allowed": true,
+        "ride_through_allowed": true
+      }
+    ]
+  },
+  "last_updated": "2026-10-30T17:51:32Z",
+  "ttl": 30,
+  "version": "3.0"
+}
