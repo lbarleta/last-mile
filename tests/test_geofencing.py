@@ -151,21 +151,26 @@ def test_an_absent_feed_is_a_no_op(lake, gbfs_client, monkeypatch):
     assert result["captures"] == 1
 
 
-def test_a_permanently_empty_feed_stores_nothing(lake, gbfs_client):
+def test_an_empty_feed_is_one_capture_that_never_multiplies(lake, gbfs_client):
     """
-    Austin advertises the feed and publishes zero features.
-
-    Most docked systems do; a file recording emptiness in every such lake
-    would be noise, so the first capture is only taken once there is content.
+    Austin advertises the feed and publishes zero features; most docked
+    systems do. The empty capture is stored — it is what distinguishes "this
+    system had no zones" from "nobody looked" — and stays one file for as long
+    as the feed stays empty, because unchanged content is never rewritten.
     """
     result = collect.refresh_geofencing(lake, gbfs_client("v30"), FIRST)
     assert result == {
-        "captures": 0,
+        "captures": 1,
         "features": 0,
-        "observed_at": None,
-        "captured": False,
+        "observed_at": FIRST,
+        "captured": True,
     }
-    assert not geofencing.capture_dir(lake.root).exists()
+    again = collect.refresh_geofencing(lake, gbfs_client("v30"), SECOND)
+    assert again["captures"] == 1
+    assert not again["captured"]
+    doc = zones_of(geofencing.latest(lake.root))
+    assert doc["type"] == "FeatureCollection"
+    assert doc["features"] == []
 
 
 def test_refresh_reference_data_includes_geofencing(lake, gbfs_client):
