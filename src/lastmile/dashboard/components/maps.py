@@ -325,16 +325,10 @@ def _add_free_bikes(layer: folium.FeatureGroup, bikes: pd.DataFrame) -> None:
     for _, row in df.iterrows():
         disabled = int(row.get("is_disabled") or 0)
         reserved = int(row.get("is_reserved") or 0)
-        status = (
-            "Disabled" if disabled else ("Reserved" if reserved else "Available")
-        )
+        status = "Disabled" if disabled else ("Reserved" if reserved else "Available")
         color = FREE_BIKE_DISABLED_COLOR if disabled else FREE_BIKE_COLOR
         range_m = row.get("current_range_meters")
-        range_txt = (
-            f"{float(range_m) / 1000.0:.1f} km"
-            if pd.notna(range_m)
-            else "n/a"
-        )
+        range_txt = f"{float(range_m) / 1000.0:.1f} km" if pd.notna(range_m) else "n/a"
         tip_info = f"{row['vehicle_id']} · Range {range_txt}"
         folium.RegularPolygonMarker(
             location=[float(row["lat"]), float(row["lon"])],
@@ -354,9 +348,7 @@ def _add_free_bikes(layer: folium.FeatureGroup, bikes: pd.DataFrame) -> None:
         ).add_to(layer)
 
 
-def _add_coverage(
-    layer: folium.FeatureGroup, coverage_geojson: dict
-) -> None:
+def _add_coverage(layer: folium.FeatureGroup, coverage_geojson: dict) -> None:
     folium.GeoJson(
         coverage_geojson,
         name="3-min Coverage",

@@ -47,9 +47,7 @@ REFERENCE_FEEDS = {
 FALLBACK_TIMEZONE = "UTC"
 
 
-def resolve_timezone(
-    conn: Db | None = None, client: GbfsClient | None = None
-) -> str:
+def resolve_timezone(conn: Db | None = None, client: GbfsClient | None = None) -> str:
     """
     The zone snapshot hours are bucketed in.
 
@@ -96,9 +94,7 @@ def collect_snapshot(conn: Db, client: GbfsClient | None = None) -> dict:
         "station_vehicle_docks_available": status.vehicle_docks_available,
         "vehicle_status": client.vehicle_status(),
     }
-    written = {
-        name: _append(conn, name, frame, ts) for name, frame in frames.items()
-    }
+    written = {name: _append(conn, name, frame, ts) for name, frame in frames.items()}
     return {"timestamp": ts.strftime(TIMESTAMP_FORMAT), "rows": written}
 
 
@@ -148,9 +144,7 @@ def refresh_reference_data(
     return results
 
 
-def refresh_geofencing(
-    conn: Db, client: GbfsClient, observed_at: datetime
-) -> dict:
+def refresh_geofencing(conn: Db, client: GbfsClient, observed_at: datetime) -> dict:
     """
     Archive the geofencing collection as a GeoJSON document when it changed.
 

@@ -190,9 +190,7 @@ def _hour_label(timestamp: str | None) -> str:
         return "this hour"
 
 
-def _fmt_vs_typical(
-    delta: float | None, timestamp: str | None, samples: int
-) -> str:
+def _fmt_vs_typical(delta: float | None, timestamp: str | None, samples: int) -> str:
     if delta is None or samples == 0:
         return "no baseline for this hour yet"
     hour = _hour_label(timestamp)
@@ -342,17 +340,13 @@ def render_live_kpis(metrics: dict[str, Any]) -> None:
         (
             "Free-floating",
             "",
-            _fmt_pct_with_count(
-                metrics["pct_free_range"], metrics["free_bikes_total"]
-            ),
+            _fmt_pct_with_count(metrics["pct_free_range"], metrics["free_bikes_total"]),
             _fmt_delta(deltas.get("pct_free_range"), as_pp=True),
         ),
         (
             "Low-range bikes",
             "Free-floating with ≤5 km left",
-            _fmt_pct_with_count(
-                metrics["pct_low_range"], metrics["low_range_bikes"]
-            ),
+            _fmt_pct_with_count(metrics["pct_low_range"], metrics["low_range_bikes"]),
             _fmt_delta(deltas.get("pct_low_range"), as_pp=True),
         ),
         (
@@ -384,10 +378,12 @@ def render_live_kpis(metrics: dict[str, Any]) -> None:
         f"""
         <div class="kpi-hero">
           <div class="kpi-hero-card">
-            {_help_icon(
+            {
+            _help_icon(
                 "Rideable bikes (docked + free-floating) for every 10 open docks. "
                 "Compared with the same hour over the past 4 weeks."
-            )}
+            )
+        }
             <div class="kpi-hero-label">Bikes per 10 docks</div>
             <div class="kpi-value-row">
               <div class="kpi-hero-value">

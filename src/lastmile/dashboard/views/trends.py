@@ -115,9 +115,7 @@ def render(metrics_svc: Metrics) -> None:
             )
             utilization = metrics_svc.get_bike_utilization(timeseries=systemwide)
             reliability = _load_reliability(metrics_svc, hours, region, latest)
-            problematic = _load_problematic_by_hour(
-                metrics_svc, hours, region, latest
-            )
+            problematic = _load_problematic_by_hour(metrics_svc, hours, region, latest)
         except Exception as exc:
             st.error(f"Failed to load trends metrics: {exc}")
             return

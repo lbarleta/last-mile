@@ -26,8 +26,13 @@ FREE_FLOATING = ("freefloat_v23", "freefloat_v30")
     [
         ("E 10th/Red River", "E 10th/Red River"),
         ([{"text": "Main St", "language": "en"}], "Main St"),
-        ([{"text": "Calle Mayor", "language": "es"},
-          {"text": "Main St", "language": "en"}], "Main St"),
+        (
+            [
+                {"text": "Calle Mayor", "language": "es"},
+                {"text": "Main St", "language": "en"},
+            ],
+            "Main St",
+        ),
         # No match falls back to the first translation rather than nothing.
         ([{"text": "Calle Mayor", "language": "es"}], "Calle Mayor"),
         ([], None),
@@ -286,10 +291,12 @@ def _views(client):
         "station_information": (client.station_information(), "station_id"),
         "station_status": (status.stations, "station_id"),
         "station_vehicle_types_available": (
-            status.vehicle_types_available, "vehicle_type_id"
+            status.vehicle_types_available,
+            "vehicle_type_id",
         ),
         "station_vehicle_docks_available": (
-            status.vehicle_docks_available, "vehicle_type_ids"
+            status.vehicle_docks_available,
+            "vehicle_type_ids",
         ),
         "vehicle_types": (client.vehicle_types(), "vehicle_type_id"),
         "system_pricing_plans": (client.system_pricing_plans(), "plan_id"),
@@ -346,9 +353,7 @@ def test_system_information_specs_agree_where_the_feeds_do(gbfs_client):
     3.0-only fields are read rather than dropped.
     """
     shared = ("system_id", "name", "timezone", "email", "url", "operator")
-    records = [
-        gbfs_client(feed_set).system_information() for feed_set in DOCKED
-    ]
+    records = [gbfs_client(feed_set).system_information() for feed_set in DOCKED]
     assert {k: records[0][k] for k in shared} == {k: records[1][k] for k in shared}
 
     v23, v30 = records

@@ -106,9 +106,10 @@ def test_a_changed_station_lands_in_the_log(lake, gbfs_client, feed_set, monkeyp
     )
     assert log == [("1", "Renamed", "changed")]
     # And the current state is the new one.
-    assert lake.fetchone(
-        "SELECT name FROM station_information WHERE station_id = '1'"
-    )[0] == "Renamed"
+    assert (
+        lake.fetchone("SELECT name FROM station_information WHERE station_id = '1'")[0]
+        == "Renamed"
+    )
 
 
 # --- hourly snapshots ------------------------------------------------------
@@ -213,18 +214,14 @@ def test_empty_regions_leave_stations_unregioned(lake, gbfs_client):
     synthetic "Unknown" bucket.
     """
     collect.init_db(lake, gbfs_client("v30"))
-    assert lake.fetchone(
-        "SELECT region_id FROM station_information LIMIT 1"
-    )[0] is None
+    assert lake.fetchone("SELECT region_id FROM station_information LIMIT 1")[0] is None
     assert queries.list_regions(lake) == ["Unknown"]
 
 
 def test_nothing_is_written_outside_the_declared_tables(lake, gbfs_client):
     collect.init_db(lake, gbfs_client("v30"))
     collect.collect_snapshot(lake, gbfs_client("v30"))
-    written = {
-        name for name in schema.TABLE_NAMES if lake.count(name)
-    }
+    written = {name for name in schema.TABLE_NAMES if lake.count(name)}
     assert written <= set(schema.TABLE_NAMES)
     assert lake.count("weather") == 0
 

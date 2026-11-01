@@ -44,9 +44,7 @@ class TrendsMetrics(BaseMetric):
         if docked.empty:
             return docked
 
-        free = queries.get_free_bike_timeseries(
-            self.conn, since=since, region=region
-        )
+        free = queries.get_free_bike_timeseries(self.conn, since=since, region=region)
         merged = docked.merge(free, on="timestamp", how="left")
         merged["free_floating"] = merged["free_floating"].fillna(0).astype(int)
         merged["total_bikes"] = (
@@ -84,9 +82,7 @@ class TrendsMetrics(BaseMetric):
             if timeseries is None
             else timeseries
         )
-        empty = pd.DataFrame(
-            columns=["hour", "bikes_in_use", "avg_parked", "samples"]
-        )
+        empty = pd.DataFrame(columns=["hour", "bikes_in_use", "avg_parked", "samples"])
         if ts.empty:
             return {
                 "baseline": None,
@@ -157,9 +153,7 @@ class TrendsMetrics(BaseMetric):
         overnight by construction.
         """
         since = self._since_from_hours(hours)
-        ts = queries.get_problematic_timeseries(
-            self.conn, since=since, region=region
-        )
+        ts = queries.get_problematic_timeseries(self.conn, since=since, region=region)
         if ts.empty:
             return pd.DataFrame(columns=["hour", "pct_empty", "pct_full", "samples"])
 

@@ -392,8 +392,7 @@ def table(name: str) -> Table:
         return BY_NAME[name]
     except KeyError:
         raise KeyError(
-            f"unknown table {name!r}; declared tables are "
-            f"{', '.join(TABLE_NAMES)}"
+            f"unknown table {name!r}; declared tables are {', '.join(TABLE_NAMES)}"
         ) from None
 
 

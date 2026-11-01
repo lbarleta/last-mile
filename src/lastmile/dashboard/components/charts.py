@@ -366,9 +366,7 @@ def render_problematic_by_hour(by_hour: pd.DataFrame) -> None:
         "status:N",
         title=None,
         scale=alt.Scale(domain=states, range=[STATUS_COLORS[s] for s in states]),
-        legend=alt.Legend(
-            orient="bottom", direction="horizontal", symbolType="stroke"
-        ),
+        legend=alt.Legend(orient="bottom", direction="horizontal", symbolType="stroke"),
     )
     ticks = [0, 3, 6, 9, 12, 15, 18, 21]
     base = alt.Chart(df).encode(
@@ -436,9 +434,7 @@ def render_station_reliability(rel: pd.DataFrame, size: int = 300) -> None:
             ),
             # Capacity, not failure rate: sizing by the latter would restate
             # distance from the origin, which the position already shows.
-            size=alt.Size(
-                "capacity:Q", legend=None, scale=alt.Scale(range=[14, 190])
-            ),
+            size=alt.Size("capacity:Q", legend=None, scale=alt.Scale(range=[14, 190])),
             color=alt.Color(
                 "mode:N",
                 title=None,

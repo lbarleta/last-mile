@@ -88,8 +88,10 @@ FEEDS: dict[str, Feed] = {
     "system_pricing_plans": Feed("system_pricing_plans", "plans"),
     "system_alerts": Feed("system_alerts", "alerts"),
     "vehicle_status": Feed(
-        "vehicle_status", "vehicles",
-        legacy_name="free_bike_status", legacy_key="bikes",
+        "vehicle_status",
+        "vehicles",
+        legacy_name="free_bike_status",
+        legacy_key="bikes",
     ),
     # The payload is a GeoJSON FeatureCollection, not an array of records; it
     # has a dedicated accessor rather than a Field table.
@@ -349,10 +351,13 @@ STATION_INFORMATION_FIELDS = (
 
 STATION_STATUS_FIELDS = (
     F("station_id", "id"),
-    F("num_vehicles_available", "number",
-      "num_vehicles_available", "num_bikes_available"),
-    F("num_vehicles_disabled", "number",
-      "num_vehicles_disabled", "num_bikes_disabled"),
+    F(
+        "num_vehicles_available",
+        "number",
+        "num_vehicles_available",
+        "num_bikes_available",
+    ),
+    F("num_vehicles_disabled", "number", "num_vehicles_disabled", "num_bikes_disabled"),
     F("num_docks_available", "number"),
     F("num_docks_disabled", "number"),
     F("is_installed", "flag"),
@@ -590,7 +595,10 @@ class GbfsClient:
             vehicle_docks_available=_explode(
                 records,
                 "vehicle_docks_available",
-                ("vehicle_type_ids", lambda entry: key_of(entry.get("vehicle_type_ids"))),
+                (
+                    "vehicle_type_ids",
+                    lambda entry: key_of(entry.get("vehicle_type_ids")),
+                ),
             ),
         )
 
