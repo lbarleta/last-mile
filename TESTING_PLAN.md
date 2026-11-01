@@ -17,10 +17,7 @@ queries, collect, geofencing. Uncovered: settings, metrics, cli, dashboard helpe
 
 - [x] **4. Trends metrics** — `tests/test_metrics_trends.py` (7 tests, lean)
 
-- [ ] **5. CLI** — `tests/test_cli.py`
-  drive `main([...])` with `--lake` tmp + fixture transport; `collect` before
-  `init-db` → 1; `init-db`, `collect`, `status` → 0; `--config` reloads;
-  `weather` / `forecast` → 1 with stub message.
+- [x] **5. CLI** — `tests/test_cli.py` (9 tests)
 
 - [ ] **6. Dashboard pure helpers** — `tests/test_dashboard_helpers.py`
   `format_snapshot_date/datetime/hour` + malformed fallbacks; `_fmt_delta`
