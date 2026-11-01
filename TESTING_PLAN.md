@@ -15,11 +15,7 @@ queries, collect, geofencing. Uncovered: settings, metrics, cli, dashboard helpe
 - [x] **3. Live Ops metrics** — `tests/test_metrics_live_ops.py` (17 tests, kept lean;
   metrics are due for a rewrite) — 93af319
 
-- [ ] **4. Trends metrics** — `tests/test_metrics_trends.py`
-  availability merge + `total_bikes` adds up; utilization overnight baseline per
-  day, day without overnight falls back to median, no overnight window uses max;
-  problematic-by-hour is zero at night; reliability respects `min_hours`.
-  Keep lean, same reason as step 3.
+- [x] **4. Trends metrics** — `tests/test_metrics_trends.py` (7 tests, lean)
 
 - [ ] **5. CLI** — `tests/test_cli.py`
   drive `main([...])` with `--lake` tmp + fixture transport; `collect` before
