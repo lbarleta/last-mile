@@ -182,5 +182,3 @@ logs/
 *.bak
 *.backup
 
-# Local working notes
-TESTING_PLAN.md
