@@ -10,77 +10,11 @@ and the DuckDB-specific SQL fragments underneath them.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
 import pytest
+from seed import START, STATUS_COLUMNS, key
 
 from lastmile import db
 from lastmile.db import queries
-
-STATION_COLUMNS = ("station_id", "name", "region_id", "capacity", "lat", "lon")
-STATUS_COLUMNS = (
-    "station_id",
-    "ts",
-    "num_vehicles_available",
-    "num_docks_available",
-)
-AVAILABLE_COLUMNS = ("station_id", "ts", "vehicle_type_id", "count")
-VEHICLE_COLUMNS = ("vehicle_id", "ts", "lat", "lon", "is_disabled", "is_reserved",
-                   "current_range_meters")
-
-START = datetime(2026, 10, 28, 6)
-# Three stations, deliberately covering each status the rollup counts.
-STATIONS = [
-    # (id, name, region_id, capacity, lat, lon, vehicles, docks)
-    ("a", "Alpha", "n", 20, 30.2700, -97.7350, 0, 20),   # empty
-    ("b", "Bravo", "n", 20, 30.2720, -97.7400, 20, 0),   # full
-    ("c", "Delta", "s", 20, 30.2900, -97.7500, 10, 10),  # healthy
-]
-REGIONS = [("n", "North"), ("s", "South")]
-# Two types, one electric, so the derived split has something to find.
-VEHICLE_TYPES = [("classic", "human"), ("ebike", "electric_assist")]
-
-
-@pytest.fixture
-def seeded(lake):
-    """A lake holding 48 hourly snapshots of three stations across three days."""
-    lake.upsert("system_regions", ("region_id", "name"), REGIONS)
-    lake.upsert(
-        "vehicle_types", ("vehicle_type_id", "propulsion_type"), VEHICLE_TYPES
-    )
-    lake.upsert(
-        "station_information",
-        STATION_COLUMNS,
-        [(sid, name, region, cap, lat, lon)
-         for sid, name, region, cap, lat, lon, _, _ in STATIONS],
-    )
-    status, available = [], []
-    for offset in range(48):
-        ts = START + timedelta(hours=offset)
-        for sid, _, _, _, _, _, vehicles, docks in STATIONS:
-            status.append((sid, ts, vehicles, docks))
-            electric = min(vehicles, 2)
-            available.append((sid, ts, "ebike", electric))
-            available.append((sid, ts, "classic", vehicles - electric))
-    lake.insert_ignore("station_status", STATUS_COLUMNS, status)
-    lake.insert_ignore(
-        "station_vehicle_types_available", AVAILABLE_COLUMNS, available
-    )
-    lake.insert_ignore(
-        "vehicle_status",
-        VEHICLE_COLUMNS,
-        [
-            ("v1", START, 30.2705, -97.7355, 0, 0, 12000.0),
-            ("v2", START, 30.2800, -97.7450, 1, 0, 1200.0),
-            ("v3", START, 30.2810, -97.7460, 0, 1, None),
-        ],
-    )
-    return lake
-
-
-def key(offset: int) -> str:
-    return (START + timedelta(hours=offset)).strftime("%Y-%m-%d-%H:00")
-
 
 # --- what exists -----------------------------------------------------------
 
@@ -198,9 +132,7 @@ def test_availability_timeseries_window_bounds_the_electric_join(seeded):
     The electric CTE repeats the outer time filter rather than scanning all
     history, so it has to agree with the outer query hour for hour.
     """
-    windowed = queries.get_availability_timeseries(
-        seeded, since=key(10), until=key(12)
-    )
+    windowed = queries.get_availability_timeseries(seeded, since=key(10), until=key(12))
     assert list(windowed["timestamp"]) == [key(10), key(11), key(12)]
     assert (windowed["ebikes_available"] == 4).all()
 
@@ -222,9 +154,7 @@ def test_availability_timeseries_filters(seeded):
     by_region = queries.get_availability_timeseries(seeded, region="South")
     assert (by_region["station_count"] == 1).all()
 
-    windowed = queries.get_availability_timeseries(
-        seeded, since=key(10), until=key(12)
-    )
+    windowed = queries.get_availability_timeseries(seeded, since=key(10), until=key(12))
     assert list(windowed["timestamp"]) == [key(10), key(11), key(12)]
 
     at_noon = queries.get_availability_timeseries(seeded, hour_of_day="12")
@@ -305,7 +235,7 @@ def test_previous_hour():
 
 
 def test_ops_day_hour():
-    assert queries.is_ops_day_hour(key(2))       # 08:00
+    assert queries.is_ops_day_hour(key(2))  # 08:00
     assert not queries.is_ops_day_hour(key(21))  # 03:00
 
 
@@ -338,7 +268,8 @@ def test_a_bad_parameter_count_is_rejected(seeded):
 
     with pytest.raises(duckdb.ProgrammingError, match="not provided"):
         seeded.fetchall(
-            "SELECT * FROM station_information WHERE station_id = ? AND name = ?", ("a",)
+            "SELECT * FROM station_information WHERE station_id = ? AND name = ?",
+            ("a",),
         )
 
 
