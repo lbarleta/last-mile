@@ -181,3 +181,6 @@ logs/
 # Backup files
 *.bak
 *.backup
+
+# Local working notes
+TESTING_PLAN.md

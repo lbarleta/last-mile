@@ -30,7 +30,9 @@ def fresh_settings(monkeypatch, tmp_path):
 
     The repo's own lastmile.toml and .env would otherwise leak in — pointing
     tests at a real lake, or at whichever feed the developer last collected.
+    Settings also read ``.env`` from the working directory, so run from tmp.
     """
+    monkeypatch.chdir(tmp_path)
     for name in list(os.environ):
         if name.startswith(f"{settings.ENV_PREFIX}_"):
             monkeypatch.delenv(name, raising=False)
