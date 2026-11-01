@@ -9,6 +9,8 @@ from branca.element import Element, MacroElement, Template
 from folium.plugins import HeatMap
 from streamlit_folium import st_folium
 
+from lastmile.metrics.live_ops import station_status_bucket
+
 STATUS_COLORS = {
     "empty": "#b42828",
     "low": "#dc8c28",
@@ -250,24 +252,13 @@ PANEL_CSS = """
 """
 
 
-def availability_bucket(row: pd.Series) -> str:
-    if row["num_vehicles_available"] == 0:
-        return "empty"
-    if row["num_docks_available"] == 0:
-        return "full"
-    capacity = row["num_vehicles_available"] + row["num_docks_available"]
-    if capacity > 0 and row["num_vehicles_available"] / capacity < 0.2:
-        return "low"
-    return "healthy"
-
-
 def _popup_html(tip_type: str, tip_status: str, tip_info: str) -> str:
     return f"<b>{tip_type}</b><br/>{tip_status}<br/>{tip_info}"
 
 
 def _add_stations(layer: folium.FeatureGroup, stations: pd.DataFrame) -> None:
     df = stations.copy()
-    df["status"] = df.apply(availability_bucket, axis=1)
+    df["status"] = df.apply(station_status_bucket, axis=1)
     for _, row in df.iterrows():
         status = str(row["status"])
         tip_info = (
@@ -296,7 +287,7 @@ def _hotspot_points(stations: pd.DataFrame) -> list[list[float]]:
     """Weighted [lat, lon, weight] points for empty/low stations."""
     points: list[list[float]] = []
     df = stations.copy()
-    df["status"] = df.apply(availability_bucket, axis=1)
+    df["status"] = df.apply(station_status_bucket, axis=1)
     for _, row in df.iterrows():
         status = str(row["status"])
         weight = HOTSPOT_WEIGHT.get(status)

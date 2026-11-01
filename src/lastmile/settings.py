@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from functools import lru_cache
@@ -188,6 +189,21 @@ def load_settings(path: str | Path | None = None) -> Settings:
     if unknown:
         raise ValueError(
             f"unknown key(s) in {config_path}: {', '.join(sorted(unknown))}"
+        )
+
+    # Keys that no longer exist are more often a stale .env than a typo, and
+    # either way silently ignoring them would hide the problem.
+    stale = sorted(
+        name
+        for name in os.environ
+        if name.startswith(f"{ENV_PREFIX}_")
+        and name != f"{ENV_PREFIX}_CONFIG"
+        and name.removeprefix(f"{ENV_PREFIX}_").lower() not in known
+    )
+    if stale:
+        warnings.warn(
+            f"ignoring unknown setting(s) in the environment: {', '.join(stale)}",
+            stacklevel=2,
         )
 
     values: dict[str, Any] = {"root": root}
