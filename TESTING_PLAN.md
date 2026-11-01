@@ -5,7 +5,7 @@ and recorded feeds, no mocking of internal modules, no Streamlit rendering
 tests, no "cover every type" parametrization. One commit and one new file per
 step; the suite stays green between steps.
 
-Starting point (2026-10-30): 179 tests, green, ~10 s. Covered: gbfs, db, schema,
+Starting point (2026-10-30): 179 tests, green, ~10 s. End (2026-11-01): 240 tests, ~14 s. Covered: gbfs, db, schema,
 queries, collect, geofencing. Uncovered: settings, metrics, cli, dashboard helpers.
 
 ## Steps
@@ -21,7 +21,8 @@ queries, collect, geofencing. Uncovered: settings, metrics, cli, dashboard helpe
 
 - [x] **6. Dashboard pure helpers** — `tests/test_dashboard_helpers.py` (16 tests)
 
-- [ ] **7. CI (optional)** — ruff + pytest on 3.11 / 3.12.
+- [x] **7. CI** — `.github/workflows/tests.yml`: ruff check + pytest on 3.11 / 3.12.
+  No `ruff format` gate: three older test files are not formatted that way.
 
 ## Side fixes done along the way
 
