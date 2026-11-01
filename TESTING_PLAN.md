@@ -19,10 +19,7 @@ queries, collect, geofencing. Uncovered: settings, metrics, cli, dashboard helpe
 
 - [x] **5. CLI** — `tests/test_cli.py` (9 tests)
 
-- [ ] **6. Dashboard pure helpers** — `tests/test_dashboard_helpers.py`
-  `format_snapshot_date/datetime/hour` + malformed fallbacks; `_fmt_delta`
-  zero-at-display-precision, `_fmt_distance_m` km switch, `_fmt_vs_typical`;
-  `time_axis` step choice and first tick; `snapshot_picker._clamp_day`.
+- [x] **6. Dashboard pure helpers** — `tests/test_dashboard_helpers.py` (16 tests)
 
 - [ ] **7. CI (optional)** — ruff + pytest on 3.11 / 3.12.
 
