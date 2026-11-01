@@ -33,6 +33,4 @@ def render(metrics_svc: Metrics) -> None:
     with left:
         render_problematic_stations(problematic)
     with right:
-        render_region_status_pct(
-            metrics_svc.get_station_status_by_region(selected_ts)
-        )
+        render_region_status_pct(metrics_svc.get_station_status_by_region(selected_ts))

@@ -43,4 +43,3 @@ class BaseMetric:
         if latest is None:
             return None
         return queries.cutoff_timestamp(hours, self.timezone, latest)
-

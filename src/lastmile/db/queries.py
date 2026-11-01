@@ -44,8 +44,7 @@ from . import (
 
 #: Stations with their region name attached. Always aliased ``s`` / ``r``.
 STATIONS = (
-    "station_information s "
-    "LEFT JOIN system_regions r ON r.region_id = s.region_id"
+    "station_information s LEFT JOIN system_regions r ON r.region_id = s.region_id"
 )
 #: The region label every breakdown groups by.
 REGION = "COALESCE(r.name, 'Unknown')"
@@ -391,10 +390,7 @@ def _haversine_m(
     lon2 = np.radians(lon2)
     dlat = lat2 - lat1
     dlon = lon2 - lon1
-    a = (
-        np.sin(dlat / 2) ** 2
-        + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-    )
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
     return 2 * 6_371_000.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
 
 
@@ -501,9 +497,7 @@ def get_free_bike_counts(
     }
 
 
-def get_free_bike_snapshot(
-    conn: Db, timestamp: str | None = None
-) -> pd.DataFrame:
+def get_free_bike_snapshot(conn: Db, timestamp: str | None = None) -> pd.DataFrame:
     """Free-floating vehicle locations for a snapshot hour (defaults to latest)."""
     if timestamp is None:
         row = conn.fetchone("SELECT MAX(ts) FROM vehicle_status")
@@ -602,9 +596,9 @@ def get_availability_timeseries(
     )
     if df.empty:
         return df
-    df["classic_available"] = (
-        df["bikes_available"] - df["ebikes_available"]
-    ).clip(lower=0)
+    df["classic_available"] = (df["bikes_available"] - df["ebikes_available"]).clip(
+        lower=0
+    )
     return df
 
 
@@ -804,9 +798,6 @@ def avg_distance_to_nearest_station_m(
 
     dlat = st_lat - bk_lat
     dlon = st_lon - bk_lon
-    a = (
-        np.sin(dlat / 2) ** 2
-        + np.cos(bk_lat) * np.cos(st_lat) * np.sin(dlon / 2) ** 2
-    )
+    a = np.sin(dlat / 2) ** 2 + np.cos(bk_lat) * np.cos(st_lat) * np.sin(dlon / 2) ** 2
     dist_m = 2 * 6_371_000.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
     return float(dist_m.min(axis=1).mean())

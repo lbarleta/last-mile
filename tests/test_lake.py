@@ -160,7 +160,10 @@ def test_upsert_leaves_other_rows_alone(lake):
 def test_upsert_rejects_a_key_the_table_does_not_have(lake):
     with pytest.raises(ValueError, match="keyed on"):
         lake.upsert(
-            "station_information", ("station_id", "name"), [("a", "First")], conflict=["name"]
+            "station_information",
+            ("station_id", "name"),
+            [("a", "First")],
+            conflict=["name"],
         )
 
 
@@ -237,7 +240,9 @@ REGIONS = ("region_id", "name")
 def test_sync_records_the_current_state(lake):
     tally = lake.sync("system_regions", REGIONS, [("a", "Alpha")], OBSERVED)
     assert tally == {"added": 1, "changed": 0, "removed": 0, "total": 1}
-    assert lake.fetchall("SELECT region_id, name FROM system_regions") == [("a", "Alpha")]
+    assert lake.fetchall("SELECT region_id, name FROM system_regions") == [
+        ("a", "Alpha")
+    ]
 
 
 def test_sync_logs_nothing_when_nothing_changed(lake):

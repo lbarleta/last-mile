@@ -204,7 +204,9 @@ class Db:
     concurrent Streamlit sessions from reading each other's rows.
     """
 
-    def __init__(self, root: str | Path, *, con: duckdb.DuckDBPyConnection | None = None):
+    def __init__(
+        self, root: str | Path, *, con: duckdb.DuckDBPyConnection | None = None
+    ):
         self.root = Path(root).expanduser()
         self._con = con if con is not None else duckdb.connect()
         # Tables that have no files yet and are standing in with an empty typed
@@ -239,9 +241,7 @@ class Db:
         if not directory.is_dir():
             return []
         return sorted(
-            path
-            for path in directory.glob("*.parquet")
-            if path.name != SEED_FILE
+            path for path in directory.glob("*.parquet") if path.name != SEED_FILE
         )
 
     def _register(self, table: str) -> None:
@@ -348,9 +348,7 @@ class Db:
         """
         spec = schema.table(table)
         if conflict is not None and tuple(conflict) != spec.key:
-            raise ValueError(
-                f"{table} is keyed on {spec.key}, not {tuple(conflict)}"
-            )
+            raise ValueError(f"{table} is keyed on {spec.key}, not {tuple(conflict)}")
         return self._store(table, columns, rows, replace=True)
 
     def delete(self, table: str, where: str, params: Sequence[Any] = ()) -> int:
@@ -429,20 +427,20 @@ class Db:
                 f"incoming.{quote(c)} = current.{quote(c)}" for c in spec.key
             )
             # Any value column that differs, a NULL on one side included.
-            differs = " OR ".join(
-                f"incoming.{quote(c)} IS DISTINCT FROM current.{quote(c)}"
-                for c in spec.value_columns
-            ) or "false"
+            differs = (
+                " OR ".join(
+                    f"incoming.{quote(c)} IS DISTINCT FROM current.{quote(c)}"
+                    for c in spec.value_columns
+                )
+                or "false"
+            )
             changes = {
-                schema.ADDED:
-                    f"{prelude} SELECT incoming.* FROM incoming "
-                    f"ANTI JOIN current ON {on}",
-                schema.CHANGED:
-                    f"{prelude} SELECT incoming.* FROM incoming "
-                    f"JOIN current ON {on} WHERE {differs}",
-                schema.REMOVED:
-                    f"{prelude} SELECT current.* FROM current "
-                    f"ANTI JOIN incoming ON {on}",
+                schema.ADDED: f"{prelude} SELECT incoming.* FROM incoming "
+                f"ANTI JOIN current ON {on}",
+                schema.CHANGED: f"{prelude} SELECT incoming.* FROM incoming "
+                f"JOIN current ON {on} WHERE {differs}",
+                schema.REMOVED: f"{prelude} SELECT current.* FROM current "
+                f"ANTI JOIN incoming ON {on}",
             }
         else:
             changes = {schema.ADDED: typed}
@@ -489,7 +487,9 @@ class Db:
             [_bind(row) for row in rows],
         )
         projection = ", ".join(
-            quote(name) if name in columns else f"CAST(NULL AS {type_}) AS {quote(name)}"
+            quote(name)
+            if name in columns
+            else f"CAST(NULL AS {type_}) AS {quote(name)}"
             for name, type_ in spec.columns
         )
         return f"SELECT {projection} FROM _incoming"
@@ -556,7 +556,9 @@ class Db:
         replace: bool,
     ) -> int:
         """Combine one file with the slice of the batch belonging to it."""
-        incoming = typed if partition is None else f"SELECT * FROM ({typed}) WHERE {partition}"
+        incoming = (
+            typed if partition is None else f"SELECT * FROM ({typed}) WHERE {partition}"
+        )
         if spec.key:
             # A batch can repeat a key itself; first row in wins, matching what
             # a row-at-a-time insert against a unique key would have done.
@@ -586,9 +588,7 @@ class Db:
         after = self._replace(cur, f"{prelude} {body}", path)
         return after - before
 
-    def _replace(
-        self, cur: duckdb.DuckDBPyConnection, body: str, path: Path
-    ) -> int:
+    def _replace(self, cur: duckdb.DuckDBPyConnection, body: str, path: Path) -> int:
         """
         Write a query's result over a Parquet file, atomically.
 

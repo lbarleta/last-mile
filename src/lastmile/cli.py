@@ -64,7 +64,9 @@ def _report_reference(results: dict) -> None:
             for kind in ("added", "changed", "removed")
             if counts[kind]
         )
-        print(f"  {name:<24} {counts['total']:>6,} rows{f' ({changes})' if changes else ''}")
+        print(
+            f"  {name:<24} {counts['total']:>6,} rows{f' ({changes})' if changes else ''}"
+        )
 
 
 def cmd_init_db(args: argparse.Namespace) -> int:
@@ -90,8 +92,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     conn = _connect(args)
     if not collect.is_initialized(conn):
         print(
-            f"Lake {_describe(args)} is not initialized; "
-            "run `lastmile init-db` first.",
+            f"Lake {_describe(args)} is not initialized; run `lastmile init-db` first.",
             file=sys.stderr,
         )
         return 1
@@ -182,7 +183,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lastmile", description="GBFS collection and bike-share ops dashboard"
     )
-    parser.add_argument("--version", action="version", version=f"lastmile {__version__}")
+    parser.add_argument(
+        "--version", action="version", version=f"lastmile {__version__}"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("init-db", help="Lay out the lake and load reference data")

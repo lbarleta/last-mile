@@ -43,9 +43,7 @@ class LiveOpsMetrics(BaseMetric):
         prior_ts = queries.previous_hour_timestamp(current["timestamp"])
         prior_snapshot = queries.get_station_snapshot_at(self.conn, prior_ts)
         prior = (
-            self._snapshot_kpis(prior_snapshot)
-            if not prior_snapshot.empty
-            else None
+            self._snapshot_kpis(prior_snapshot) if not prior_snapshot.empty else None
         )
 
         free_bikes = queries.get_free_bike_counts(
@@ -73,23 +71,15 @@ class LiveOpsMetrics(BaseMetric):
         current["pct_docked_classic"] = (
             classic / all_bikes * 100.0 if all_bikes else 0.0
         )
-        current["pct_docked_ebike"] = (
-            ebikes / all_bikes * 100.0 if all_bikes else 0.0
-        )
-        current["pct_free_range"] = (
-            free_total / all_bikes * 100.0 if all_bikes else 0.0
-        )
-        current["pct_low_range"] = (
-            low_range / free_total * 100.0 if free_total else 0.0
-        )
+        current["pct_docked_ebike"] = ebikes / all_bikes * 100.0 if all_bikes else 0.0
+        current["pct_free_range"] = free_total / all_bikes * 100.0 if all_bikes else 0.0
+        current["pct_low_range"] = low_range / free_total * 100.0 if free_total else 0.0
         current["disabled_bikes_total"] = disabled_bikes
         current["pct_disabled_bikes"] = (
             disabled_bikes / all_bikes * 100.0 if all_bikes else 0.0
         )
 
-        free_bike_locs = queries.get_free_bike_snapshot(
-            self.conn, current["timestamp"]
-        )
+        free_bike_locs = queries.get_free_bike_snapshot(self.conn, current["timestamp"])
         current["avg_dist_to_station_m"] = queries.avg_distance_to_nearest_station_m(
             snapshot, free_bike_locs
         )
@@ -115,12 +105,8 @@ class LiveOpsMetrics(BaseMetric):
             prior_disabled = prior["bikes_disabled"] + prior_free["disabled"]
             prior_classic = prior["classic_available"]
             prior_ebikes = prior["ebikes_available"]
-            prior_pct_classic = (
-                prior_classic / prior_all * 100.0 if prior_all else 0.0
-            )
-            prior_pct_ebike = (
-                prior_ebikes / prior_all * 100.0 if prior_all else 0.0
-            )
+            prior_pct_classic = prior_classic / prior_all * 100.0 if prior_all else 0.0
+            prior_pct_ebike = prior_ebikes / prior_all * 100.0 if prior_all else 0.0
             prior_pct_free = (
                 prior_free["total"] / prior_all * 100.0 if prior_all else 0.0
             )
@@ -136,22 +122,14 @@ class LiveOpsMetrics(BaseMetric):
             deltas["pct_docked_classic"] = (
                 current["pct_docked_classic"] - prior_pct_classic
             )
-            deltas["pct_docked_ebike"] = (
-                current["pct_docked_ebike"] - prior_pct_ebike
-            )
+            deltas["pct_docked_ebike"] = current["pct_docked_ebike"] - prior_pct_ebike
             deltas["pct_free_range"] = current["pct_free_range"] - prior_pct_free
-            deltas["free_bikes_total"] = float(
-                free_total - prior_free["total"]
-            )
-            deltas["disabled_bikes_total"] = float(
-                disabled_bikes - prior_disabled
-            )
+            deltas["free_bikes_total"] = float(free_total - prior_free["total"])
+            deltas["disabled_bikes_total"] = float(disabled_bikes - prior_disabled)
             deltas["pct_disabled_bikes"] = (
                 current["pct_disabled_bikes"] - prior_pct_disabled
             )
-            deltas["low_range_bikes"] = float(
-                low_range - prior_free["low_range"]
-            )
+            deltas["low_range_bikes"] = float(low_range - prior_free["low_range"])
             deltas["pct_low_range"] = current["pct_low_range"] - prior_pct_low
 
             prior_bike_locs = queries.get_free_bike_snapshot(
@@ -160,10 +138,7 @@ class LiveOpsMetrics(BaseMetric):
             prior_avg = queries.avg_distance_to_nearest_station_m(
                 prior_snapshot, prior_bike_locs
             )
-            if (
-                current["avg_dist_to_station_m"] is not None
-                and prior_avg is not None
-            ):
+            if current["avg_dist_to_station_m"] is not None and prior_avg is not None:
                 deltas["avg_dist_to_station_m"] = (
                     current["avg_dist_to_station_m"] - prior_avg
                 )
@@ -305,12 +280,18 @@ class LiveOpsMetrics(BaseMetric):
             "empty_stations": empty_stations,
             "healthy_stations": healthy_stations,
             "low_stations": low_stations,
-            "pct_full": (full_stations / total_stations * 100.0) if total_stations else 0.0,
-            "pct_empty": (empty_stations / total_stations * 100.0) if total_stations else 0.0,
+            "pct_full": (full_stations / total_stations * 100.0)
+            if total_stations
+            else 0.0,
+            "pct_empty": (empty_stations / total_stations * 100.0)
+            if total_stations
+            else 0.0,
             "pct_healthy": (
                 healthy_stations / total_stations * 100.0 if total_stations else 0.0
             ),
-            "pct_low": (low_stations / total_stations * 100.0) if total_stations else 0.0,
+            "pct_low": (low_stations / total_stations * 100.0)
+            if total_stations
+            else 0.0,
             "pct_dock_availability": (
                 docks / capacity_slots * 100.0 if capacity_slots else 0.0
             ),
@@ -323,12 +304,8 @@ class LiveOpsMetrics(BaseMetric):
             "ebikes_available": ebikes,
             "classic_available": classic,
             "ebike_classic_ratio": ratio,
-            "pct_ebike_availability": (
-                ebikes / bikes * 100.0 if bikes else 0.0
-            ),
-            "pct_classic_availability": (
-                classic / bikes * 100.0 if bikes else 0.0
-            ),
+            "pct_ebike_availability": (ebikes / bikes * 100.0 if bikes else 0.0),
+            "pct_classic_availability": (classic / bikes * 100.0 if bikes else 0.0),
             "bikes_available": bikes,
             "bikes_disabled": bikes_disabled,
         }
@@ -379,9 +356,7 @@ class LiveOpsMetrics(BaseMetric):
             return pd.DataFrame()
         return queries.get_free_bike_snapshot(self.conn, ts)
 
-    def get_problematic_stations(
-        self, timestamp: str | None = None
-    ) -> pd.DataFrame:
+    def get_problematic_stations(self, timestamp: str | None = None) -> pd.DataFrame:
         """Stations empty/full in the last daytime ops hours before ``timestamp``."""
         ts = timestamp or self.get_latest_timestamp()
         if ts is None:
