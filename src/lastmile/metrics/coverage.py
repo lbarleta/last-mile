@@ -7,10 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from pyproj import Transformer
+from shapely import transform
 from shapely.geometry import Point, mapping, shape
-from shapely.ops import transform, unary_union
+from shapely.ops import unary_union
 
 from ..settings import get_settings
 
@@ -47,14 +49,20 @@ def _transformers(projected_crs: str) -> tuple[Transformer, Transformer]:
     return to_proj, to_wgs
 
 
+def _reproject(geom: Any, transformer: Transformer) -> Any:
+    return transform(
+        geom, lambda xy: np.column_stack(transformer.transform(xy[:, 0], xy[:, 1]))
+    )
+
+
 def _to_projected(geom: Any) -> Any:
     to_proj, _ = _transformers(get_settings().projected_crs)
-    return transform(lambda x, y, z=None: to_proj.transform(x, y), geom)
+    return _reproject(geom, to_proj)
 
 
 def _to_wgs84(geom: Any) -> Any:
     _, to_wgs = _transformers(get_settings().projected_crs)
-    return transform(lambda x, y, z=None: to_wgs.transform(x, y), geom)
+    return _reproject(geom, to_wgs)
 
 
 def _collect_points(
@@ -142,7 +150,7 @@ def compute_coverage(
     buffers = []
     for lat, lon in points:
         x, y = to_proj.transform(lon, lat)
-        buffers.append(Point(x, y).buffer(radius_m, resolution=8))
+        buffers.append(Point(x, y).buffer(radius_m, quad_segs=8))
 
     covered = unary_union(buffers).intersection(boundary_proj)
     covered_area = float(covered.area) if not covered.is_empty else 0.0
