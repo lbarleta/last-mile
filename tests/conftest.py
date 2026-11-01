@@ -50,6 +50,15 @@ def _empty_config(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def seeded(lake):
+    """The :mod:`seed` lake: three stations over 48 hours, one free-bike hour."""
+    from seed import seed
+
+    seed(lake)
+    return lake
+
+
+@pytest.fixture
 def lake(tmp_path):
     """An empty warehouse in a tmp directory, with its datasets laid out."""
     from lastmile import db
