@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from lastmile import cli, settings
+from lastmile import cli, geofencing, settings
 
 DOCKED = ("v23", "v30")
 
@@ -46,15 +46,54 @@ def test_init_collect_status_round_trip(tmp_path, capsys, feed_transport, feed_s
     assert "geofencing_zones" in out
 
 
+def test_init_db_archives_geofencing(tmp_path, capsys, feed_transport):
+    feed_transport("freefloat_v30")
+    lake = tmp_path / "lake"
+    run(capsys, "init-db", "--lake", str(lake))
+    assert len(geofencing.captures(lake)) == 1
+
+
 def test_collect_can_refresh_reference_data(tmp_path, capsys, feed_transport):
     transport = feed_transport("v30")
     lake = str(tmp_path / "lake")
     run(capsys, "init-db", "--lake", lake)
     transport.requested.clear()
 
-    code, _, _ = run(capsys, "collect", "--lake", lake, "--refresh-reference")
+    code, _, _ = run(capsys, "collect", "--lake", lake, "--reference")
     assert code == 0
     assert "station_information" in transport.requested
+
+
+def test_collect_can_archive_geofencing(tmp_path, capsys, feed_transport):
+    transport = feed_transport("v30")
+    lake = str(tmp_path / "lake")
+    run(capsys, "init-db", "--lake", lake)
+    transport.requested.clear()
+
+    code, _, _ = run(capsys, "collect", "--lake", lake, "--geofencing")
+    assert code == 0
+    assert "geofencing_zones" in transport.requested
+
+
+def test_collect_without_flags_runs_every_path(tmp_path, capsys, feed_transport):
+    transport = feed_transport("v30")
+    lake = str(tmp_path / "lake")
+    run(capsys, "init-db", "--lake", lake)
+    transport.requested.clear()
+
+    run(capsys, "collect", "--lake", lake)
+    for feed in ("station_status", "station_information", "geofencing_zones"):
+        assert feed in transport.requested
+
+
+def test_a_selected_path_runs_alone(tmp_path, capsys, feed_transport):
+    transport = feed_transport("v30")
+    lake = str(tmp_path / "lake")
+    run(capsys, "init-db", "--lake", lake)
+    transport.requested.clear()
+
+    run(capsys, "collect", "--lake", lake, "--reference")
+    assert "station_status" not in transport.requested
 
 
 def test_status_of_an_empty_lake_points_at_init_db(tmp_path, capsys):

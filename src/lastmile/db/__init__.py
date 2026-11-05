@@ -430,6 +430,18 @@ class Db:
         row = self._cursor().execute(f"SELECT COUNT(*) FROM {quote(table)}").fetchone()
         return int(row[0]) if row and row[0] is not None else 0
 
+    def is_initialized(self) -> bool:
+        """
+        True when the datasets exist and reference data has been loaded.
+
+        ``system_information`` is the signal rather than the station tables, because
+        an entirely free-floating system legitimately has none of those.
+        """
+        for table in ("system_information", *schema.HOURLY_TABLES):
+            if not self.has_table(table):
+                return False
+        return self.count("system_information") > 0
+
     # --- writes -----------------------------------------------------------
 
     def insert_ignore(
