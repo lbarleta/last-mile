@@ -2,7 +2,10 @@
 The ``lastmile`` command.
 
     lastmile init-db               lay out the lake and load reference data
-    lastmile collect               store one hourly snapshot (cron-friendly)
+    lastmile collect               collect every feed (cron-friendly)
+        --snapshot                   only the hourly status feeds
+        --reference                  only the tracked reference feeds
+        --geofencing                 only the geofencing zones
     lastmile status                what the warehouse currently holds
     lastmile dashboard             serve the Streamlit dashboard
     lastmile weather               not implemented
@@ -12,7 +15,7 @@ Global flags: ``--lake`` overrides the configured lake directory, ``--config``
 points at an explicit lastmile.toml.
 
 This module prints and exits. Fetching is :mod:`lastmile.collect`'s, laying out
-a lake is :mod:`lastmile.db.setup`'s, and the feed client is never touched here.
+a lake is :mod:`lastmile.db.schema`'s, and the feed client is never touched here.
 Warnings from those layers — a system with no timezone, say — reach the
 terminal through ``logging``, which ``main`` points at stderr.
 """
@@ -58,13 +61,6 @@ def _describe(args: argparse.Namespace) -> str:
 def _report_reference(results: dict) -> None:
     """One line per reference feed, naming only what actually changed."""
     for name, counts in results.items():
-        if "captures" in counts:  # geofencing: documents, not rows
-            note = " (new capture archived)" if counts["captured"] else ""
-            print(
-                f"  {name:<24} {counts['features']:>6,} zones, "
-                f"{counts['captures']} capture(s){note}"
-            )
-            continue
         changes = ", ".join(
             f"{counts[kind]} {kind}"
             for kind in ("added", "changed", "removed")
@@ -75,37 +71,67 @@ def _report_reference(results: dict) -> None:
         )
 
 
-def cmd_init_db(args: argparse.Namespace) -> int:
-    from .db import setup
+def _report_geofencing(counts: dict) -> None:
+    """Geofencing is documents, not rows: zones in the newest capture."""
+    note = " (new capture archived)" if counts["captured"] else ""
+    print(
+        f"  {'geofencing_zones':<24} {counts['features']:>6,} zones, "
+        f"{counts['captures']} capture(s){note}"
+    )
 
+
+def cmd_init_db(args: argparse.Namespace) -> int:
+    """
+    Lay out every dataset, then load the reference data once.
+
+    That first load is what tells the lake which system it holds — above all
+    its timezone, which every local hour is rendered in from then on. Safe to
+    run repeatedly; a second run only logs whatever reference data changed.
+    """
+    from . import collect
+    from .db import queries, schema
+
+    conn = _connect(args)
     print(f"Initializing {_describe(args)}…")
-    result = setup.init_db(_connect(args))
-    system = result["system"]
+    schema.create_all(conn)
+    results = collect.collect(conn, snapshot=False)
+    system = queries.get_system_info(conn) or {}
     print(
         f"Reading {system.get('name') or system.get('system_id') or 'system'} "
-        f"on GBFS {system.get('gbfs_version')} ({result['timezone']})."
+        f"on GBFS {system.get('gbfs_version')} ({conn.timezone})."
     )
-    _report_reference(result["reference"])
+    _report_reference(results["reference"])
+    _report_geofencing(results["geofencing"])
     return 0
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
+    """Run the selected collection paths; with none selected, run them all."""
     from . import collect
-    from .db import setup
 
     conn = _connect(args)
-    if not setup.is_initialized(conn):
+    if not conn.is_initialized():
         print(
             f"Lake {_describe(args)} is not initialized; run `lastmile init-db` first.",
             file=sys.stderr,
         )
         return 1
 
-    result = collect.collect_snapshot(conn)
-    written = ", ".join(f"{n:,} {name}" for name, n in result["rows"].items())
-    print(f"{result['timestamp']}: {written} rows written to {_describe(args)}")
-    if args.refresh_reference:
-        _report_reference(collect.refresh_reference_data(conn))
+    every = not (args.snapshot or args.reference or args.geofencing)
+    results = collect.collect(
+        conn,
+        snapshot=args.snapshot or every,
+        reference=args.reference or every,
+        geofencing=args.geofencing or every,
+    )
+    if "reference" in results:
+        _report_reference(results["reference"])
+    if "geofencing" in results:
+        _report_geofencing(results["geofencing"])
+    if "snapshot" in results:
+        result = results["snapshot"]
+        written = ", ".join(f"{n:,} {name}" for name, n in result["rows"].items())
+        print(f"{result['timestamp']}: {written} rows written to {_describe(args)}")
     return 0
 
 
@@ -195,12 +221,27 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p)
     p.set_defaults(func=cmd_init_db)
 
-    p = sub.add_parser("collect", help="Store one hourly GBFS snapshot")
+    p = sub.add_parser(
+        "collect",
+        help="Collect from the GBFS feeds",
+        description="Collect from the GBFS feeds. With no flags, run every "
+        "collection path; otherwise run exactly the paths named.",
+    )
     _add_common(p)
     p.add_argument(
-        "--refresh-reference",
+        "--snapshot",
         action="store_true",
-        help="Also re-read the slow-changing feeds and log any changes",
+        help="Store one hourly snapshot of the status feeds",
+    )
+    p.add_argument(
+        "--reference",
+        action="store_true",
+        help="Re-read the slow-changing feeds and log any changes",
+    )
+    p.add_argument(
+        "--geofencing",
+        action="store_true",
+        help="Archive the geofencing zones if they changed",
     )
     p.set_defaults(func=cmd_collect)
 

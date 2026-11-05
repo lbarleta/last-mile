@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 import pytest
 
 from lastmile import collect, geofencing
-from lastmile.db import setup
 
 FREE_FLOATING = ("freefloat_v23", "freefloat_v30")
 FIRST = datetime(2026, 10, 29, 8, 0, 0, tzinfo=UTC)
@@ -172,9 +171,3 @@ def test_an_empty_feed_is_one_capture_that_never_multiplies(lake, gbfs_client):
     doc = zones_of(geofencing.latest(lake.root))
     assert doc["type"] == "FeatureCollection"
     assert doc["features"] == []
-
-
-def test_refresh_reference_data_includes_geofencing(lake, gbfs_client):
-    results = setup.init_db(lake, gbfs_client("freefloat_v30"))["reference"]
-    assert results["geofencing_zones"]["features"] == 2
-    assert results["geofencing_zones"]["captured"]

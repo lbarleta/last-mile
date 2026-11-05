@@ -1,12 +1,23 @@
 """
-Hourly GBFS collection, plus the slow-changing reference data.
+GBFS collection: the hourly snapshot, the reference data, the geofencing zones.
 
-Two rhythms. The status feeds are snapshotted every hour and appended, stamped
-with the current UTC hour and merged against the ``(entity, ts)`` key — so
-re-running the collector inside the same hour adds nothing rather than a
-duplicate. Everything else — stations, vehicle types, pricing plans, regions,
-alerts — changes a few times a year, so it is stored as current state plus a
-log of changes rather than an hourly copy. See :meth:`lastmile.db.Db.sync`.
+:func:`collect` is the entry point. It opens one feed client, reads the clock
+once, and runs whichever of the three paths are selected against both, so a
+run's paths share one discovery request and one ``observed_at``:
+
+* :func:`collect_snapshot` — the status feeds, appended every hour, stamped
+  with the current UTC hour and merged against the ``(entity, ts)`` key — so
+  re-running the collector inside the same hour adds nothing rather than a
+  duplicate.
+* :func:`refresh_reference_data` — stations, vehicle types, pricing plans,
+  regions, alerts. They change a few times a year, so each is stored as current
+  state plus a log of changes rather than an hourly copy. See
+  :meth:`lastmile.db.Db.sync`.
+* :func:`refresh_geofencing` — the zone collection, archived as a GeoJSON
+  document whenever it changed. See :mod:`lastmile.geofencing`.
+
+The paths are public so they can be driven one at a time with an explicit
+client and instant, which is how the tests pin the clock.
 
 Nothing here knows what timezone the collected system is in, and that is the
 point. GBFS publishes every timestamp as RFC 3339, an instant with an explicit
@@ -18,7 +29,7 @@ is just another hour here, and both fall-back readings are stored.
 
 The feed's own shape is :mod:`lastmile.gbfs`'s problem; everything arriving here
 is already normalized to GBFS 3.0. Functions return row counts and leave
-printing to the CLI, which never touches the feed client itself.
+printing to the CLI.
 """
 
 from __future__ import annotations
@@ -44,29 +55,52 @@ REFERENCE_FEEDS = {
 }
 
 
-def now() -> datetime:
-    """The current instant, timezone-aware, in UTC."""
-    return datetime.now(UTC)
+def collect(
+    conn: Db,
+    *,
+    snapshot: bool = True,
+    reference: bool = True,
+    geofencing: bool = True,
+    client: GbfsClient | None = None,
+    observed_at: datetime | None = None,
+) -> dict:
+    """
+    Run the selected collection paths; all three by default.
+
+    Reference data goes first, so a timezone it brings is the one the snapshot
+    hour is reported in. Returns each selected path's result under its own name
+    — ``reference``, ``geofencing``, ``snapshot`` — and nothing for the others.
+    ``client`` defaults to the configured feed and ``observed_at`` to now.
+    """
+    client = client or GbfsClient()
+    observed_at = observed_at or datetime.now(UTC)
+    results = {}
+    if reference:
+        results["reference"] = refresh_reference_data(conn, client, observed_at)
+    if geofencing:
+        results["geofencing"] = refresh_geofencing(conn, client, observed_at)
+    if snapshot:
+        results["snapshot"] = collect_snapshot(conn, client, observed_at)
+    return results
 
 
-def snapshot_hour() -> datetime:
-    """The current UTC hour: the ``ts`` every row of one snapshot carries."""
-    return now().replace(minute=0, second=0, microsecond=0)
+def snapshot_hour(instant: datetime) -> datetime:
+    """The UTC hour an instant falls in: the ``ts`` every row of one snapshot carries."""
+    return instant.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
 
 
 # --- hourly snapshot --------------------------------------------------------
 
 
-def collect_snapshot(conn: Db, client: GbfsClient | None = None) -> dict:
+def collect_snapshot(conn: Db, client: GbfsClient, observed_at: datetime) -> dict:
     """
     Fetch and store one snapshot of every status feed.
 
-    Returns the hour, as the lake's local ``YYYY-MM-DD-HH:00`` key, and the
-    rows newly written per table — zero everywhere if the hour was already
-    stored.
+    Every row is stamped with :func:`snapshot_hour` of ``observed_at``. Returns
+    that hour, as the lake's local ``YYYY-MM-DD-HH:00`` key, and the rows newly
+    written per table — zero everywhere if the hour was already stored.
     """
-    client = client or GbfsClient()
-    ts = snapshot_hour()
+    ts = snapshot_hour(observed_at)
     status = client.station_status()
     frames = {
         "station_status": status.stations,
@@ -92,19 +126,16 @@ def _append(conn: Db, name: str, frame: pd.DataFrame, ts: datetime) -> int:
 
 
 def refresh_reference_data(
-    conn: Db, client: GbfsClient | None = None, observed_at: datetime | None = None
+    conn: Db, client: GbfsClient, observed_at: datetime
 ) -> dict[str, dict[str, int]]:
     """
-    Re-read everything that changes more slowly than the status feeds.
+    Re-read the tracked feeds, logging whatever changed.
 
     Each tracked table keeps its current state and gains a log row only where
-    something actually differs, and the geofencing collection only writes when
-    its content changed — so running this hourly costs nothing when nothing did.
-    The lake's display zone is re-resolved afterwards, since this is where a
-    system's timezone arrives.
+    something actually differs, so running this hourly costs nothing when
+    nothing did. The lake's display zone is re-resolved afterwards, since this
+    is where a system's timezone arrives.
     """
-    client = client or GbfsClient()
-    observed_at = observed_at or now()
     system = client.system_information()
     fields = [field.name for field in SYSTEM_INFORMATION_FIELDS]
     results = {
@@ -123,9 +154,11 @@ def refresh_reference_data(
         results[name] = conn.sync(
             name, columns, rows_from_frame(frame, columns), observed_at
         )
-    results["geofencing_zones"] = refresh_geofencing(conn, client, observed_at)
     conn.refresh_timezone()
     return results
+
+
+# --- geofencing -------------------------------------------------------------
 
 
 def refresh_geofencing(conn: Db, client: GbfsClient, observed_at: datetime) -> dict:
@@ -137,7 +170,6 @@ def refresh_geofencing(conn: Db, client: GbfsClient, observed_at: datetime) -> d
     lake, and the newest file is current. An absent feed is a no-op; a
     present-but-empty collection is authoritative — a system that deleted all
     its zones really has none, and recording that is a version like any other.
-    See :mod:`lastmile.geofencing`.
     """
     data = client.geofencing_zones()
     written = data is not None and geofencing.record(

@@ -15,7 +15,7 @@ cd last-mile && python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
 lastmile init-db      # create the lake, load reference data
-lastmile collect      # one hourly snapshot; run from cron
+lastmile collect      # one hourly collection; run from cron
 lastmile status       # what the warehouse holds
 lastmile dashboard    # serve the Streamlit app
 ```
@@ -26,6 +26,11 @@ feed to Austin's GBFS 3.0.
 ```cron
 5 * * * * cd /path/to/last-mile && .venv/bin/lastmile collect >> logs/collect.log 2>&1
 ```
+
+`lastmile collect` runs every path: the hourly snapshot, the slow-changing
+reference feeds, and the geofencing zones. The latter two cost nothing when
+unchanged. `--snapshot`, `--reference` and `--geofencing` run exactly the paths
+named instead.
 
 ## Warehouse
 
