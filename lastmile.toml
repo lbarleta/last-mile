@@ -1,24 +1,19 @@
 # LastMile configuration.
 #
-# Every key is optional — delete one and the built-in default applies (see the
-# Settings class in src/lastmile/settings.py). Any key can be overridden by an
-# environment variable named LASTMILE_<KEY>, so secrets belong in .env rather
-# than here:
+# Every key is optional — delete one and the built-in default applies (from
+# src/lastmile/settings.py). Any key can be overridden by an environment 
+# variable named LASTMILE_<KEY>. Secrets belong in .env rather than here:
 #
 #   lake_path         ->  LASTMILE_LAKE_PATH
 #   coverage_radius_m ->  LASTMILE_COVERAGE_RADIUS_M
 #
-# Relative paths resolve against the directory holding this file.
 
 # --- warehouse ---------------------------------------------------------------
-# Directory holding the Parquet data lake. DuckDB reads it in-process, so there
-# is no server and nothing to configure beyond where the files go. Back it up or
-# move it to another host by copying the directory.
+# Directory holding the Parquet data lake. Can be initiate with CLI tool.
 lake_path = "data/lake"
 
 # --- GBFS feed ---------------------------------------------------------------
-# Any system's discovery document, on spec 2.3 or 3.x. The 3.0 feed is preferred
-# where a publisher offers both.
+# Supports spec 2.3 or 3.x. The 3.0 feed is preferred.
 feeds_url = "https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
 # Language used to pick localized names out of a 3.x feed, and to choose the
 # language block on a 2.x discovery document.
@@ -52,9 +47,10 @@ fleet_baseline_hours = [0, 1, 2, 3, 4]
 coverage_radius_m = 300
 # City boundary used for the coverage map. Swap in your own GeoJSON to run the
 # dashboard over a different city.
-boundary_geojson = "assets/sf_county_boundary.geojson"
-# Projected CRS used for buffering; EPSG:3310 is California Albers (meters).
-projected_crs = "EPSG:3310"
+boundary_geojson = "assets/austin.geojson"
+
+# Projected CRS used for buffering
+projected_crs = "EPSG:4269"
 
 # --- dashboard -----------------------------------------------------------------
 dashboard_title = "Last Mile"
