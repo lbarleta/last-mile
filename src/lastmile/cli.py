@@ -11,13 +11,8 @@ The ``lastmile`` command.
     lastmile weather               not implemented
     lastmile forecast              not implemented
 
-Global flags: ``--lake`` overrides the configured lake directory, ``--config``
-points at an explicit lastmile.toml.
-
-This module prints and exits. Fetching is :mod:`lastmile.collect`'s, laying out
-a lake is :mod:`lastmile.db.schema`'s, and the feed client is never touched here.
-Warnings from those layers — a system with no timezone, say — reach the
-terminal through ``logging``, which ``main`` points at stderr.
+Every command takes ``--lake`` and ``--config``. This module only prints;
+collection is :mod:`lastmile.collect`'s and the lake layout :mod:`lastmile.db.schema`'s.
 """
 
 from __future__ import annotations
@@ -81,13 +76,7 @@ def _report_geofencing(counts: dict) -> None:
 
 
 def cmd_init_db(args: argparse.Namespace) -> int:
-    """
-    Lay out every dataset, then load the reference data once.
-
-    That first load is what tells the lake which system it holds — above all
-    its timezone, which every local hour is rendered in from then on. Safe to
-    run repeatedly; a second run only logs whatever reference data changed.
-    """
+    """Lay out the lake and load everything but a snapshot. Safe to re-run."""
     from . import collect
     from .db import queries, schema
 
@@ -106,7 +95,7 @@ def cmd_init_db(args: argparse.Namespace) -> int:
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
-    """Run the selected collection paths; with none selected, run them all."""
+    """Run the selected collection paths, or all of them when none is named."""
     from . import collect
 
     conn = _connect(args)
@@ -136,6 +125,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
+    """Print what the lake holds, table by table."""
     from .db import queries, schema
 
     conn = _connect(args)
@@ -179,6 +169,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
+    """Hand off to ``streamlit run``; its exit code is ours."""
     import subprocess
 
     main_py = Path(__file__).resolve().parent / "dashboard" / "main.py"
@@ -190,7 +181,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
 
 def cmd_weather(args: argparse.Namespace) -> int:
-    """Wiring only — see :mod:`lastmile.weather`, which is a stub."""
+    """Not implemented; :mod:`lastmile.weather` is a stub."""
     from . import weather
 
     print(f"{weather.MESSAGE}.", file=sys.stderr)
@@ -198,7 +189,7 @@ def cmd_weather(args: argparse.Namespace) -> int:
 
 
 def cmd_forecast(args: argparse.Namespace) -> int:
-    """Wiring only — see :mod:`lastmile.forecasting`, which is a stub."""
+    """Not implemented; :mod:`lastmile.forecasting` is a stub."""
     from . import forecasting
 
     print(f"{forecasting.MESSAGE}.", file=sys.stderr)
@@ -209,6 +200,7 @@ def cmd_forecast(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """The argument parser; each subcommand sets ``func`` to its handler."""
     parser = argparse.ArgumentParser(
         prog="lastmile", description="GBFS collection and bike-share ops dashboard"
     )
@@ -272,6 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point. Warnings from lower layers reach stderr through ``logging``."""
     logging.basicConfig(
         level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
     )
