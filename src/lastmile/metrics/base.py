@@ -17,10 +17,8 @@ class BaseMetric:
 
     @property
     def timezone(self) -> str:
-        """The zone stored hours are in, as recorded when the lake was built."""
-        from ..collect import resolve_timezone
-
-        return resolve_timezone(self.conn)
+        """The zone snapshot keys are rendered in; see :class:`lastmile.db.Db`."""
+        return self.conn.timezone
 
     def close(self) -> None:
         if self._owns_conn and self.conn is not None:
@@ -42,4 +40,4 @@ class BaseMetric:
         latest = self.get_latest_timestamp()
         if latest is None:
             return None
-        return queries.cutoff_timestamp(hours, self.timezone, latest)
+        return queries.cutoff_timestamp(hours, latest)

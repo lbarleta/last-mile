@@ -55,8 +55,9 @@ class Settings:
     # A GBFS discovery document (gbfs.json) for any system, 2.3 or 3.x.
     feeds_url: str = "https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
     feeds_lang: str = "en"
-    # Blank reads the system's own timezone from its system_information feed,
-    # which is where a feed-agnostic deployment should get it.
+    # The zone snapshot hours are shown in. Blank reads the system's own
+    # timezone from its system_information feed, which is where a feed-agnostic
+    # deployment should get it. Display only: the lake itself stores instants.
     timezone: str = ""
     request_timeout_s: int = 30
 

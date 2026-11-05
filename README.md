@@ -34,7 +34,7 @@ credentials, no connection string; moving a warehouse is copying the directory.
 
 ```text
 data/lake/
-  station_status/2026-10-29.parquet       hourly history, one file per day
+  station_status/2026-10-29.parquet       hourly history, one file per UTC day
   station_information/data.parquet        current state
   station_information_log/data.parquet    one row per add / change / removal
 ```
@@ -77,8 +77,8 @@ language}` names, RFC 3339 timestamps, and boolean flags. The spec version is
 read from the discovery document, or inferred from its shape when absent.
 
 Timezone, display name and spec version come from the system's own
-`system_information` feed and are stored in `system_information`. The snapshot
-hour is bucketed in that timezone.
+`system_information` feed and are stored in `system_information`. The timezone
+is what the dashboard renders hours in; see [Timestamps](#timestamps).
 
 GBFS has no electric-vehicle count; it is derived by joining
 `station_vehicle_types_available` to `vehicle_types.propulsion_type`.
@@ -115,10 +115,45 @@ No network and no server: feed tests run against recorded GBFS documents in
 table is declared as a placeholder but nothing writes to it, and no forecast
 tables exist.
 
+## Timestamps
+
+One rule: **every timestamp is an instant with an explicit timezone.** GBFS
+publishes all of its timestamps as RFC 3339, and the lake follows the spec's
+lead — every timestamp column (`ts`, `observed_at`, `fetched_at`) is a
+`TIMESTAMPTZ`, the collector stamps snapshots with the current UTC hour, and
+the storage layer refuses a naive `datetime` outright. Nothing in the lake is
+in local time, and neither the collector nor the metrics know what timezone the
+system is in.
+
+Local time is a display concern, handled in one place. When a lake is opened,
+`lastmile.db.Db` reads the system's `system_information.timezone` (or the
+`timezone` setting, which overrides it) and applies it to its DuckDB session,
+so the hour labels and dates the dashboard shows are the system's own
+wall-clock time. A lake whose system declares no timezone renders UTC and logs
+a warning every time it is opened; a system without a timezone is a problem
+the operator should know about.
+
+Consequences worth knowing:
+
+- **DST.** UTC has none, so collection is unaffected: the local hour that
+  repeats at fall-back is two stored snapshots, and the hour that vanishes at
+  spring-forward is simply a label no snapshot carries. Aggregates count both
+  fall-back rows. The dashboard's snapshot picker, which works in local labels,
+  resolves the one repeated label per year to the later of the two readings and
+  skips the earlier one.
+- **Partitions** are UTC days, so which file a row lands in never depends on
+  the display zone.
+- **Half-hour zones** (India, Newfoundland) will show `HH:00` labels for hours
+  that start at `:30` on the local clock. Snapshots are still taken on the UTC
+  hour.
+- **Geofencing captures** are named for their UTC instant, with a trailing `Z`.
+- **One system per lake.** The display zone is a property of the lake; run one
+  lake per GBFS system.
+
 ## Collection cadence
 
-`lastmile collect` buckets each run to the local hour, and the snapshot key
-(`YYYY-MM-DD-HH:00`) has no minute field. Running the cron entry more often
+`lastmile collect` stamps each run with the current UTC hour, and the snapshot
+key (`YYYY-MM-DD-HH:00`) has no minute field. Running the cron entry more often
 than hourly is safe but pointless: the first run of each hour stores a
 snapshot, the rest fetch the feed and discard it as a duplicate key. Finer
 resolution would mean widening the key format and revisiting the metric

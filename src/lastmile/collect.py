@@ -1,35 +1,36 @@
 """
 Hourly GBFS collection, plus the slow-changing reference data.
 
-Two rhythms. The status feeds are snapshotted every hour and appended, bucketed
-to the local hour of the *system being collected*, not the host's, and merged
-against the ``(entity, ts)`` key — so re-running the collector inside the same
-hour adds nothing rather than a duplicate. The hour repeats once a year when DST
-falls back; the key means the second reading is skipped.
+Two rhythms. The status feeds are snapshotted every hour and appended, stamped
+with the current UTC hour and merged against the ``(entity, ts)`` key — so
+re-running the collector inside the same hour adds nothing rather than a
+duplicate. Everything else — stations, vehicle types, pricing plans, regions,
+alerts — changes a few times a year, so it is stored as current state plus a
+log of changes rather than an hourly copy. See :meth:`lastmile.db.Db.sync`.
 
-Everything else — stations, vehicle types, pricing plans, regions, alerts —
-changes a few times a year, so it is stored as current state plus a log of
-changes rather than an hourly copy. See :meth:`lastmile.db.Db.sync`.
+Nothing here knows what timezone the collected system is in, and that is the
+point. GBFS publishes every timestamp as RFC 3339, an instant with an explicit
+offset, and the lake does the same: ``ts`` is the instant the snapshot was
+taken, truncated to the hour. Local time is a rendering concern, handled by
+:mod:`lastmile.db` when a value is read. It also means DST never reaches this
+module — UTC has none, so the hour that repeats or vanishes on the local clock
+is just another hour here, and both fall-back readings are stored.
 
 The feed's own shape is :mod:`lastmile.gbfs`'s problem; everything arriving here
 is already normalized to GBFS 3.0. Functions return row counts and leave
-printing to the CLI.
+printing to the CLI, which never touches the feed client itself.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime
 
 import pandas as pd
 
 from . import geofencing
-from .constants import TIMESTAMP_FORMAT
 from .db import Db, rows_from_frame
-from .db.queries import stored_timezone
-from .db.schema import HOURLY_TABLES, create_all, table
+from .db.schema import table
 from .gbfs import SYSTEM_INFORMATION_FIELDS, GbfsClient
-from .settings import get_settings
 
 # Tracked table <- the client accessor that fills it. Order matters only for
 # how the CLI reports it.
@@ -42,37 +43,15 @@ REFERENCE_FEEDS = {
     "station_information": "station_information",
 }
 
-# Used only when neither the configuration nor the feed names a timezone, which
-# would otherwise leave the snapshot hour undefined.
-FALLBACK_TIMEZONE = "UTC"
+
+def now() -> datetime:
+    """The current instant, timezone-aware, in UTC."""
+    return datetime.now(UTC)
 
 
-def resolve_timezone(conn: Db | None = None, client: GbfsClient | None = None) -> str:
-    """
-    The zone snapshot hours are bucketed in.
-
-    Configuration wins, because an operator may deliberately want a different
-    one. Otherwise the system's own ``system_information.timezone`` is used,
-    read from the warehouse when it has been collected and from the live feed
-    when a client is at hand. Collecting Austin against a Los Angeles default
-    would silently file every snapshot two hours early.
-    """
-    configured = get_settings().timezone.strip()
-    if configured:
-        return configured
-    if client is not None and client.timezone:
-        return client.timezone
-    if conn is not None:
-        stored = stored_timezone(conn)
-        if stored:
-            return stored
-    return FALLBACK_TIMEZONE
-
-
-def snapshot_hour(timezone: str) -> datetime:
-    """The current local hour, naive, as stored in the ``ts`` columns."""
-    now = datetime.now(ZoneInfo(timezone))
-    return now.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+def snapshot_hour() -> datetime:
+    """The current UTC hour: the ``ts`` every row of one snapshot carries."""
+    return now().replace(minute=0, second=0, microsecond=0)
 
 
 # --- hourly snapshot --------------------------------------------------------
@@ -82,11 +61,12 @@ def collect_snapshot(conn: Db, client: GbfsClient | None = None) -> dict:
     """
     Fetch and store one snapshot of every status feed.
 
-    Returns the hour and the rows newly written per table — zero everywhere if
-    the hour was already stored.
+    Returns the hour, as the lake's local ``YYYY-MM-DD-HH:00`` key, and the
+    rows newly written per table — zero everywhere if the hour was already
+    stored.
     """
     client = client or GbfsClient()
-    ts = snapshot_hour(resolve_timezone(conn, client))
+    ts = snapshot_hour()
     status = client.station_status()
     frames = {
         "station_status": status.stations,
@@ -95,7 +75,7 @@ def collect_snapshot(conn: Db, client: GbfsClient | None = None) -> dict:
         "vehicle_status": client.vehicle_status(),
     }
     written = {name: _append(conn, name, frame, ts) for name, frame in frames.items()}
-    return {"timestamp": ts.strftime(TIMESTAMP_FORMAT), "rows": written}
+    return {"timestamp": conn.to_key(ts), "rows": written}
 
 
 def _append(conn: Db, name: str, frame: pd.DataFrame, ts: datetime) -> int:
@@ -112,7 +92,7 @@ def _append(conn: Db, name: str, frame: pd.DataFrame, ts: datetime) -> int:
 
 
 def refresh_reference_data(
-    conn: Db, client: GbfsClient, observed_at: datetime | None = None
+    conn: Db, client: GbfsClient | None = None, observed_at: datetime | None = None
 ) -> dict[str, dict[str, int]]:
     """
     Re-read everything that changes more slowly than the status feeds.
@@ -120,8 +100,11 @@ def refresh_reference_data(
     Each tracked table keeps its current state and gains a log row only where
     something actually differs, and the geofencing collection only writes when
     its content changed — so running this hourly costs nothing when nothing did.
+    The lake's display zone is re-resolved afterwards, since this is where a
+    system's timezone arrives.
     """
-    observed_at = observed_at or datetime.now()
+    client = client or GbfsClient()
+    observed_at = observed_at or now()
     system = client.system_information()
     fields = [field.name for field in SYSTEM_INFORMATION_FIELDS]
     results = {
@@ -141,6 +124,7 @@ def refresh_reference_data(
             name, columns, rows_from_frame(frame, columns), observed_at
         )
     results["geofencing_zones"] = refresh_geofencing(conn, client, observed_at)
+    conn.refresh_timezone()
     return results
 
 
@@ -160,23 +144,3 @@ def refresh_geofencing(conn: Db, client: GbfsClient, observed_at: datetime) -> d
         conn.root, geofencing.document(data), observed_at
     )
     return {**geofencing.summary(conn.root), "captured": written}
-
-
-def init_db(conn: Db, client: GbfsClient | None = None) -> dict:
-    """Lay out the lake and load reference data. Safe to run repeatedly."""
-    create_all(conn)
-    client = client or GbfsClient()
-    return refresh_reference_data(conn, client)
-
-
-def is_initialized(conn: Db) -> bool:
-    """
-    True when the datasets exist and reference data has been loaded.
-
-    ``system_information`` is the signal rather than the station tables, because
-    an entirely free-floating system legitimately has none of those.
-    """
-    for name in ("system_information", *HOURLY_TABLES):
-        if not conn.has_table(name):
-            return False
-    return conn.count("system_information") > 0
