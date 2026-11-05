@@ -222,8 +222,8 @@ def test_problematic_timeseries(seeded):
 
 
 def test_cutoff_timestamp():
-    assert queries.cutoff_timestamp(6, None, key(10)) == key(4)
-    assert queries.cutoff_timestamp(None, None, key(10)) is None
+    assert queries.cutoff_timestamp(6, key(10)) == key(4)
+    assert queries.cutoff_timestamp(None, key(10)) is None
 
 
 def test_lookback_timestamps():
@@ -241,7 +241,6 @@ def test_ops_day_hour():
 
 def test_system_info_is_absent_until_collected(lake):
     assert queries.get_system_info(lake) is None
-    assert queries.stored_timezone(lake) is None
 
 
 def test_distance_to_nearest_station(seeded):

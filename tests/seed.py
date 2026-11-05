@@ -9,7 +9,7 @@ snapshots of it; ``key`` names those hours.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 STATION_COLUMNS = ("station_id", "name", "region_id", "capacity", "lat", "lon")
 STATUS_COLUMNS = (
@@ -29,7 +29,9 @@ VEHICLE_COLUMNS = (
     "current_range_meters",
 )
 
-START = datetime(2026, 10, 28, 6)
+# Instants, as everything in the lake is. The seeded lake has no
+# system_information and renders UTC, so these labels read back unchanged.
+START = datetime(2026, 10, 28, 6, tzinfo=UTC)
 # Three stations, deliberately covering each status the rollup counts.
 STATIONS = [
     # (id, name, region_id, capacity, lat, lon, vehicles, docks)

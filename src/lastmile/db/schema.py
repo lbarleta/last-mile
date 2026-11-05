@@ -17,7 +17,7 @@ Two kinds of feed, two shapes:
 
 * **Snapshotted** — the live status feeds (``station_status``,
   ``vehicle_status`` and the two per-vehicle-type breakdowns). Appended once per
-  collection run, partitioned one file per local calendar day, so a run only
+  collection run, partitioned one file per UTC calendar day, so a run only
   rewrites today's file.
 * **Tracked** — the slow feeds whose entities carry stable ids: stations,
   vehicle types, pricing plans, regions, alerts. Storing a copy per run would
@@ -35,8 +35,7 @@ a module that is not implemented; nothing writes to it.
 ``key`` is the logical primary key. Parquet enforces nothing, so
 :class:`lastmile.db.Db` applies it on write: ``insert_ignore`` drops incoming
 rows whose key is already stored, ``upsert`` replaces them, ``sync`` does the
-tracked-table comparison. Collection is idempotent because of that, including
-the repeated hour at the DST fall-back.
+tracked-table comparison. Collection is idempotent because of that.
 
 The ``_schema.parquet`` seed matters more than it looks. Globbing an empty
 directory is an error in DuckDB, and the column types of a view over Parquet
@@ -44,9 +43,14 @@ come from the files it reads, so a table with no data yet would otherwise have
 neither. The seed carries the full typed header in zero rows; every data file is
 written with these same columns, in this order, missing ones cast to NULL.
 
-Types are DuckDB's. ``ts`` columns are real TIMESTAMPs — naive, holding local
-time for the system being collected. Identifiers are VARCHAR: they are opaque
-strings in GBFS, and publishers use both short counters and UUIDs. GBFS arrays
+Types are DuckDB's. Every timestamp column — ``ts``, ``observed_at``,
+``fetched_at`` — is a TIMESTAMPTZ holding an instant, the same thing an RFC 3339
+string in a GBFS feed holds. Nothing in the lake is in local time; the collected
+system's zone is applied when a value is read, by the DuckDB session that
+:class:`lastmile.db.Db` opens. That is what makes the snapshot key an instant
+too, so the repeated hour at a DST fall-back is two rows rather than one
+dropped reading. Identifiers are VARCHAR: they are opaque strings in GBFS, and
+publishers use both short counters and UUIDs. GBFS arrays
 of scalars (``rental_methods``, ``pricing_plan_ids``) are stored comma-joined,
 and arrays of objects with no useful flattening (``per_min_pricing``) as JSON
 text.
@@ -73,8 +77,8 @@ class Table:
     name: str
     columns: tuple[tuple[str, str], ...]
     key: tuple[str, ...] = ()
-    # Timestamp column whose calendar date names the file. None keeps the table
-    # in a single data.parquet.
+    # Timestamp column whose UTC calendar date names the file. None keeps the
+    # table in a single data.parquet.
     partition_by: str | None = None
     # Keep a companion <name>_log recording every add, change and removal.
     tracked: bool = False
@@ -126,7 +130,7 @@ def log_table(spec: Table) -> Table:
         f"{spec.name}{LOG_SUFFIX}",
         (
             *spec.columns,
-            ("observed_at", "TIMESTAMP"),
+            ("observed_at", "TIMESTAMPTZ"),
             ("change", "VARCHAR"),
         ),
         key=(*spec.key, "observed_at"),
@@ -279,7 +283,7 @@ _DECLARED: tuple[Table, ...] = (
         "station_status",
         (
             ("station_id", "VARCHAR"),
-            ("ts", "TIMESTAMP"),
+            ("ts", "TIMESTAMPTZ"),
             ("num_vehicles_available", "INTEGER"),
             ("num_vehicles_disabled", "INTEGER"),
             ("num_docks_available", "INTEGER"),
@@ -300,7 +304,7 @@ _DECLARED: tuple[Table, ...] = (
         "station_vehicle_types_available",
         (
             ("station_id", "VARCHAR"),
-            ("ts", "TIMESTAMP"),
+            ("ts", "TIMESTAMPTZ"),
             ("vehicle_type_id", "VARCHAR"),
             ("count", "INTEGER"),
         ),
@@ -314,7 +318,7 @@ _DECLARED: tuple[Table, ...] = (
         "station_vehicle_docks_available",
         (
             ("station_id", "VARCHAR"),
-            ("ts", "TIMESTAMP"),
+            ("ts", "TIMESTAMPTZ"),
             ("vehicle_type_ids", "VARCHAR"),
             ("count", "INTEGER"),
         ),
@@ -326,7 +330,7 @@ _DECLARED: tuple[Table, ...] = (
         "vehicle_status",
         (
             ("vehicle_id", "VARCHAR"),
-            ("ts", "TIMESTAMP"),
+            ("ts", "TIMESTAMPTZ"),
             ("lat", "DOUBLE"),
             ("lon", "DOUBLE"),
             ("is_reserved", "TINYINT"),
@@ -350,14 +354,14 @@ _DECLARED: tuple[Table, ...] = (
     Table(
         "weather",
         (
-            ("ts", "TIMESTAMP"),
+            ("ts", "TIMESTAMPTZ"),
             ("temp_c", "DOUBLE"),
             ("precip_mm", "DOUBLE"),
             ("wind_kph", "DOUBLE"),
             ("humidity_pct", "DOUBLE"),
             ("cloud_pct", "DOUBLE"),
             ("source", "VARCHAR"),
-            ("fetched_at", "VARCHAR"),
+            ("fetched_at", "TIMESTAMPTZ"),
         ),
         key=("ts",),
     ),

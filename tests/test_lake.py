@@ -8,18 +8,24 @@ Parquet has no primary keys, so everything the old MySQL schema got from
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
 from lastmile import db
+from lastmile.constants import TIMESTAMP_FORMAT
 from lastmile.db import schema
 
 STATUS_COLUMNS = ("station_id", "ts", "num_vehicles_available", "num_docks_available")
 
 
+def utc(key: str) -> datetime:
+    """A snapshot key read as a UTC instant — the empty lake's own zone."""
+    return datetime.strptime(key, TIMESTAMP_FORMAT).replace(tzinfo=UTC)
+
+
 def status_row(station: str, hour: str, bikes: int = 1, docks: int = 9):
-    return (station, db.to_dt(hour), bikes, docks)
+    return (station, utc(hour), bikes, docks)
 
 
 # --- layout ----------------------------------------------------------------
@@ -172,7 +178,7 @@ def test_writing_an_undeclared_column_fails_loudly(lake):
         lake.insert_ignore(
             "station_status",
             ("station_id", "ts", "num_scooters"),
-            [("a", db.to_dt("2026-10-29-08:00"), 1)],
+            [("a", utc("2026-10-29-08:00"), 1)],
         )
 
 
@@ -192,7 +198,7 @@ def test_missing_values_become_null_not_nan(lake):
     lake.insert_ignore(
         "station_status",
         STATUS_COLUMNS,
-        [("a", db.to_dt("2026-10-29-08:00"), None, np.nan)],
+        [("a", utc("2026-10-29-08:00"), None, np.nan)],
     )
     row = lake.fetchone(
         "SELECT num_vehicles_available, num_docks_available FROM station_status"
@@ -209,7 +215,7 @@ def test_delete_removes_matching_rows(lake):
         STATUS_COLUMNS,
         [status_row("a", "2026-10-28-08:00"), status_row("a", "2026-10-29-08:00")],
     )
-    removed = lake.delete("station_status", "ts = ?", (db.to_dt("2026-10-28-08:00"),))
+    removed = lake.delete("station_status", "ts = ?", (utc("2026-10-28-08:00"),))
     assert removed == 1
     assert lake.count("station_status") == 1
 
@@ -232,8 +238,8 @@ def test_delete_on_an_absent_table_is_a_no_op(tmp_path):
 # --- tracked tables --------------------------------------------------------
 
 
-OBSERVED = datetime(2026, 10, 29, 8)
-LATER = datetime(2026, 10, 30, 8)
+OBSERVED = datetime(2026, 10, 29, 8, tzinfo=UTC)
+LATER = datetime(2026, 10, 30, 8, tzinfo=UTC)
 REGIONS = ("region_id", "name")
 
 
@@ -315,7 +321,108 @@ def test_snapshot_keys_round_trip(lake):
     lake.insert_ignore("station_status", STATUS_COLUMNS, [status_row("a", hour)])
     stored = lake.fetchone("SELECT ts FROM station_status")[0]
     assert isinstance(stored, datetime)
+    assert stored.tzinfo is not None
     assert db.to_key(stored) == hour
+    assert lake.to_dt(hour) == utc(hour)
+
+
+def test_a_naive_datetime_is_refused(lake):
+    with pytest.raises(ValueError, match="naive"):
+        lake.insert_ignore(
+            "station_status",
+            STATUS_COLUMNS,
+            [("a", datetime(2026, 10, 29, 8), 1, 9)],
+        )
+
+
+def test_a_naive_query_parameter_is_refused(lake):
+    with pytest.raises(ValueError, match="naive"):
+        lake.fetchall(
+            "SELECT * FROM station_status WHERE ts = ?", (datetime(2026, 10, 29, 8),)
+        )
+
+
+def test_partitions_are_utc_days(lake):
+    """Which file a row lands in must not depend on the display zone."""
+    lake.insert_ignore(
+        "station_status", STATUS_COLUMNS, [status_row("a", "2026-10-29-23:00")]
+    )
+    files = {path.name for path in lake.dataset_dir("station_status").glob("2*")}
+    assert files == {"2026-10-29.parquet"}
+
+
+# --- the display zone ------------------------------------------------------
+
+
+def with_system_timezone(lake, zone):
+    lake.sync(
+        "system_information",
+        ("system_id", "timezone"),
+        [("sys", zone)],
+        OBSERVED,
+    )
+    lake.refresh_timezone()
+
+
+def test_an_empty_lake_renders_utc(lake):
+    assert lake.timezone == "UTC"
+
+
+def test_the_system_timezone_renders_local_labels(lake):
+    """The stored instant does not move; only how it reads does."""
+    lake.insert_ignore(
+        "station_status", STATUS_COLUMNS, [status_row("a", "2026-10-29-13:00")]
+    )
+    with_system_timezone(lake, "America/Chicago")
+    assert lake.timezone == "America/Chicago"
+    assert lake.fetchone(f"SELECT {db.key_expr('ts')} FROM station_status")[0] == (
+        "2026-10-29-08:00"
+    )
+    assert lake.to_dt("2026-10-29-08:00") == utc("2026-10-29-13:00")
+    assert lake.to_key(utc("2026-10-29-13:00")) == "2026-10-29-08:00"
+
+
+def test_the_configured_timezone_wins(lake, monkeypatch):
+    from lastmile import settings
+
+    with_system_timezone(lake, "America/Chicago")
+    monkeypatch.setenv("LASTMILE_TIMEZONE", "Europe/Lisbon")
+    settings.get_settings.cache_clear()
+    assert lake.refresh_timezone() == "Europe/Lisbon"
+
+
+def test_a_system_without_a_timezone_warns_and_renders_utc(lake, caplog):
+    with_system_timezone(lake, None)
+    assert lake.timezone == "UTC"
+    assert "declares no timezone" in caplog.text
+
+
+def test_an_unknown_timezone_warns_and_renders_utc(lake, caplog):
+    with_system_timezone(lake, "Mars/Olympus_Mons")
+    assert lake.timezone == "UTC"
+    assert "unknown timezone" in caplog.text
+
+
+def test_the_repeated_fall_back_hour_is_two_rows_with_one_label(lake):
+    """
+    America/Chicago reads 01:00 twice on 2026-11-01: at 06:00Z and 07:00Z.
+
+    Both instants are stored; the label resolves to the later one.
+    """
+    with_system_timezone(lake, "America/Chicago")
+    lake.insert_ignore(
+        "station_status",
+        STATUS_COLUMNS,
+        [status_row("a", "2026-11-01-06:00"), status_row("a", "2026-11-01-07:00")],
+    )
+    labels = lake.fetchall(f"SELECT {db.key_expr('ts')} FROM station_status")
+    assert labels == [("2026-11-01-01:00",), ("2026-11-01-01:00",)]
+    assert lake.to_dt("2026-11-01-01:00") == utc("2026-11-01-07:00")
+
+
+def test_shift_key_works_on_the_wall_clock():
+    assert db.shift_key("2026-11-01-01:00", -1) == "2026-11-01-00:00"
+    assert db.shift_key("2026-10-31-23:00", 2) == "2026-11-01-01:00"
 
 
 @pytest.mark.parametrize(

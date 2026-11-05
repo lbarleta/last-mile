@@ -9,7 +9,8 @@ Table and column names live in :mod:`lastmile.db.schema`.
 from __future__ import annotations
 
 # Hourly snapshot key used across the app, its cache keys, and the metric layer.
-# Stored as a real TIMESTAMP; this is the form it takes above the storage layer.
+# A local wall-clock label in the collected system's zone; the lake stores the
+# instant behind it (see lastmile.db), and this is the form it takes above.
 TIMESTAMP_FORMAT = "%Y-%m-%d-%H:00"
 
 # GBFS propulsion types that count as electric. Used to split the per-type

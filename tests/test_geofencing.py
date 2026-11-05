@@ -10,15 +10,16 @@ feed's content differs. Geometry is stored exactly as published.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
 from lastmile import collect, geofencing
+from lastmile.db import setup
 
 FREE_FLOATING = ("freefloat_v23", "freefloat_v30")
-FIRST = datetime(2026, 10, 29, 8, 0, 0)
-SECOND = datetime(2026, 10, 30, 8, 0, 0)
+FIRST = datetime(2026, 10, 29, 8, 0, 0, tzinfo=UTC)
+SECOND = datetime(2026, 10, 30, 8, 0, 0, tzinfo=UTC)
 
 
 def zones_of(path):
@@ -51,7 +52,7 @@ def test_absent_feed_reads_as_none(gbfs_client, monkeypatch):
 def test_each_capture_is_a_valid_geojson_file(lake, gbfs_client):
     collect.refresh_geofencing(lake, gbfs_client("freefloat_v30"), FIRST)
     stored = geofencing.captures(lake.root)
-    assert [path.name for path in stored] == ["20261029T080000.geojson"]
+    assert [path.name for path in stored] == ["20261029T080000Z.geojson"]
     doc = zones_of(stored[0])
     assert doc["type"] == "FeatureCollection"
     assert len(doc["features"]) == 2
@@ -174,6 +175,6 @@ def test_an_empty_feed_is_one_capture_that_never_multiplies(lake, gbfs_client):
 
 
 def test_refresh_reference_data_includes_geofencing(lake, gbfs_client):
-    results = collect.init_db(lake, gbfs_client("freefloat_v30"))
+    results = setup.init_db(lake, gbfs_client("freefloat_v30"))["reference"]
     assert results["geofencing_zones"]["features"] == 2
     assert results["geofencing_zones"]["captured"]

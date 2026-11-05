@@ -10,11 +10,17 @@ The ``lastmile`` command.
 
 Global flags: ``--lake`` overrides the configured lake directory, ``--config``
 points at an explicit lastmile.toml.
+
+This module prints and exits. Fetching is :mod:`lastmile.collect`'s, laying out
+a lake is :mod:`lastmile.db.setup`'s, and the feed client is never touched here.
+Warnings from those layers — a system with no timezone, say — reach the
+terminal through ``logging``, which ``main`` points at stderr.
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -70,27 +76,25 @@ def _report_reference(results: dict) -> None:
 
 
 def cmd_init_db(args: argparse.Namespace) -> int:
-    from . import collect
-    from .gbfs import GbfsClient
+    from .db import setup
 
     print(f"Initializing {_describe(args)}…")
-    conn = _connect(args)
-    client = GbfsClient()
-    info = client.system_information()
-    results = collect.init_db(conn, client)
+    result = setup.init_db(_connect(args))
+    system = result["system"]
     print(
-        f"Reading {info.get('name') or info.get('system_id') or 'system'} "
-        f"on GBFS {client.version} ({collect.resolve_timezone(conn, client)})."
+        f"Reading {system.get('name') or system.get('system_id') or 'system'} "
+        f"on GBFS {system.get('gbfs_version')} ({result['timezone']})."
     )
-    _report_reference(results)
+    _report_reference(result["reference"])
     return 0
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
     from . import collect
+    from .db import setup
 
     conn = _connect(args)
-    if not collect.is_initialized(conn):
+    if not setup.is_initialized(conn):
         print(
             f"Lake {_describe(args)} is not initialized; run `lastmile init-db` first.",
             file=sys.stderr,
@@ -101,9 +105,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     written = ", ".join(f"{n:,} {name}" for name, n in result["rows"].items())
     print(f"{result['timestamp']}: {written} rows written to {_describe(args)}")
     if args.refresh_reference:
-        from .gbfs import GbfsClient
-
-        _report_reference(collect.refresh_reference_data(conn, GbfsClient()))
+        _report_reference(collect.refresh_reference_data(conn))
     return 0
 
 
@@ -121,7 +123,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(
             f"System: {info['name'] or info['system_id']} "
             f"({info['system_id']}) · GBFS {info['gbfs_version']} · "
-            f"{info['timezone']}"
+            f"{info['timezone'] or 'no timezone declared'} "
+            f"(hours shown in {conn.timezone})"
         )
     first, last = queries.get_timestamp_bounds(conn)
     print(f"Snapshots: {first} → {last}")
@@ -228,6 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(
+        level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
+    )
     args = build_parser().parse_args(argv)
     if getattr(args, "config", None):
         os.environ["LASTMILE_CONFIG"] = args.config

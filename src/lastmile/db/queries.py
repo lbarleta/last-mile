@@ -23,13 +23,12 @@ exactly one row per station; the aggregates need no de-duplication pass.
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from ..constants import ELECTRIC_PROPULSION, FREE_FLOATING_REGION, TIMESTAMP_FORMAT
+from ..constants import ELECTRIC_PROPULSION, FREE_FLOATING_REGION
 from ..settings import get_settings
 from . import (
     Db,
@@ -38,7 +37,7 @@ from . import (
     hour_label_expr,
     key_expr,
     real_cast,
-    to_dt,
+    shift_key,
     to_key,
 )
 
@@ -123,12 +122,6 @@ def get_system_info(conn: Db) -> dict | None:
     return dict(zip(SYSTEM_FIELDS, row)) if row else None
 
 
-def stored_timezone(conn: Db) -> str | None:
-    """The collected system's timezone, as recorded by the last init/refresh."""
-    info = get_system_info(conn) or {}
-    return info.get("timezone") or None
-
-
 def get_reference_changes(conn: Db, table: str, limit: int = 50) -> pd.DataFrame:
     """
     Recent entries from a tracked table's change log, newest first.
@@ -205,18 +198,13 @@ def list_snapshot_hours_for_date(conn: Db, date_str: str) -> list[str]:
     return [row[0] for row in rows if row[0]]
 
 
-def cutoff_timestamp(
-    hours: int | None,
-    timezone: str | None = None,
-    latest: str | None = None,
-) -> str | None:
+def cutoff_timestamp(hours: int | None, latest: str | None = None) -> str | None:
     """Return a timestamp string for filtering the last N hours from `latest`."""
     if hours is None:
         return None
     if latest is None:
         raise ValueError("latest timestamp required when filtering by hours")
-    start = to_dt(latest) - timedelta(hours=hours)
-    return start.strftime(TIMESTAMP_FORMAT)
+    return shift_key(latest, -hours)
 
 
 # --- snapshots -------------------------------------------------------------
@@ -225,7 +213,7 @@ def cutoff_timestamp(
 def get_station_snapshot_at(conn: Db, timestamp: str) -> pd.DataFrame:
     """Stations joined with station_status for a specific hourly timestamp."""
     key = key_expr("st.ts")
-    moment = to_dt(timestamp)
+    moment = conn.to_dt(timestamp)
     return conn.read_sql(
         f"""
         WITH {_electric_cte(["a.ts = ?"])}
@@ -267,7 +255,7 @@ def get_latest_station_snapshot(conn: Db) -> pd.DataFrame:
 
 def previous_hour_timestamp(timestamp: str) -> str:
     """Return the previous hourly snapshot key for a timestamp string."""
-    return (to_dt(timestamp) - timedelta(hours=1)).strftime(TIMESTAMP_FORMAT)
+    return shift_key(timestamp, -1)
 
 
 def is_ops_day_hour(timestamp: str) -> bool:
@@ -281,11 +269,7 @@ def lookback_timestamps(timestamp: str, hours: int | None = None) -> list[str]:
     """Selected hour plus the previous ``hours - 1`` hourly keys."""
     if hours is None:
         hours = get_settings().problematic_lookback_hours
-    end = to_dt(timestamp)
-    return [
-        (end - timedelta(hours=offset)).strftime(TIMESTAMP_FORMAT)
-        for offset in range(hours)
-    ]
+    return [shift_key(timestamp, -offset) for offset in range(hours)]
 
 
 def get_problematic_stations(
@@ -359,7 +343,7 @@ def get_problematic_stations(
         ) > 0
         ORDER BY hours_problematic DESC, name ASC
         """,
-        tuple(to_dt(ts) for ts in day_hours),
+        tuple(conn.to_dt(ts) for ts in day_hours),
     )
     if df.empty:
         return pd.DataFrame(columns=empty_cols)
@@ -485,7 +469,7 @@ def get_free_bike_counts(
         FROM vehicle_status
         WHERE ts = ?
         """,
-        (low_range_meters, to_dt(timestamp)),
+        (low_range_meters, conn.to_dt(timestamp)),
     )
     if not row:
         return {"total": 0, "disabled": 0, "reserved": 0, "low_range": 0}
@@ -521,7 +505,7 @@ def get_free_bike_snapshot(conn: Db, timestamp: str | None = None) -> pd.DataFra
         FROM vehicle_status
         WHERE ts = ?
         """,
-        (to_dt(timestamp),),
+        (conn.to_dt(timestamp),),
     )
 
 
@@ -529,6 +513,7 @@ def get_free_bike_snapshot(conn: Db, timestamp: str | None = None) -> pd.DataFra
 
 
 def _time_filters(
+    conn: Db,
     column: str,
     since: str | None,
     until: str | None,
@@ -539,10 +524,10 @@ def _time_filters(
     params: list[Any] = []
     if since is not None:
         clauses.append(f"{column} >= ?")
-        params.append(to_dt(since))
+        params.append(conn.to_dt(since))
     if until is not None:
         clauses.append(f"{column} <= ?")
-        params.append(to_dt(until))
+        params.append(conn.to_dt(until))
     if hour_of_day is not None:
         clauses.append(f"{hour_expr(column)} = ?")
         params.append(str(hour_of_day).zfill(2))
@@ -566,8 +551,8 @@ def get_availability_timeseries(
     """
     # The CTE is bound first because it appears first in the statement, and it
     # repeats the time window so it does not scan the whole breakdown table.
-    inner_clauses, inner_params = _time_filters("a.ts", since, until, hour_of_day)
-    clauses, params = _time_filters("st.ts", since, until, hour_of_day)
+    inner_clauses, inner_params = _time_filters(conn, "a.ts", since, until, hour_of_day)
+    clauses, params = _time_filters(conn, "st.ts", since, until, hour_of_day)
     if region is not None:
         clauses.append(f"{REGION} = ?")
         params.append(region)
@@ -618,7 +603,7 @@ def get_free_bike_timeseries(
     if region is not None and region != FREE_FLOATING_REGION:
         return pd.DataFrame(columns=["timestamp", "free_floating"])
 
-    clauses, params = _time_filters("ts", since, until, hour_of_day)
+    clauses, params = _time_filters(conn, "ts", since, until, hour_of_day)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     key = key_expr("ts")
@@ -632,11 +617,6 @@ def get_free_bike_timeseries(
         """,
         params,
     )
-
-
-def _shift_timestamp(timestamp: str, hours: int) -> str:
-    """Shift a snapshot key by a whole number of hours."""
-    return (to_dt(timestamp) + timedelta(hours=hours)).strftime(TIMESTAMP_FORMAT)
 
 
 def get_problematic_timeseries(
@@ -655,14 +635,12 @@ def get_problematic_timeseries(
     """
     if lookback_hours is None:
         lookback_hours = get_settings().problematic_lookback_hours
-    pad_since = (
-        _shift_timestamp(since, -(lookback_hours - 1)) if since is not None else None
-    )
+    pad_since = shift_key(since, -(lookback_hours - 1)) if since is not None else None
     clauses: list[str] = []
     params: list[Any] = []
     if pad_since is not None:
         clauses.append("st.ts >= ?")
-        params.append(to_dt(pad_since))
+        params.append(conn.to_dt(pad_since))
     if region is not None:
         clauses.append(f"{REGION} = ?")
         params.append(region)
@@ -695,10 +673,10 @@ def get_problematic_timeseries(
         lagged = flags[["station_id", "timestamp", "is_empty", "is_full"]].copy()
         if lag:
             lagged["timestamp"] = lagged["timestamp"].map(
-                lambda t, h=lag: _shift_timestamp(t, h)
+                lambda t, h=lag: shift_key(t, h)
             )
         merged = base.merge(lagged, on=["station_id", "timestamp"], how="left")
-        lookback_ts = base["timestamp"].map(lambda t, h=lag: _shift_timestamp(t, -h))
+        lookback_ts = base["timestamp"].map(lambda t, h=lag: shift_key(t, -h))
         ops = lookback_ts.map(is_ops_day_hour)
         empty_any = empty_any | (merged["is_empty"].fillna(0).astype(bool) & ops)
         full_any = full_any | (merged["is_full"].fillna(0).astype(bool) & ops)
@@ -735,7 +713,7 @@ def get_station_reliability(
     params: list[Any] = []
     if since is not None:
         clauses.append("st.ts >= ?")
-        params.append(to_dt(since))
+        params.append(conn.to_dt(since))
     if region is not None:
         clauses.append(f"{REGION} = ?")
         params.append(region)

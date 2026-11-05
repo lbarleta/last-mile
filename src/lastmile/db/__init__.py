@@ -25,10 +25,21 @@ Three write methods, differing in what happens to rows already stored:
 :meth:`Db.upsert` appends, replacing it; and :meth:`Db.sync` replaces a tracked
 table's whole current state, logging only what actually differed.
 
-Snapshot hours cross this boundary as ``YYYY-MM-DD-HH:00`` strings, which is
-what the app, its cache keys, and the metric layer speak. They are bound as real
-datetimes and formatted back on the way out, so ``ts`` is a genuine TIMESTAMP
-without that leaking upward.
+Every timestamp in the lake is an instant — a TIMESTAMPTZ, the same thing an
+RFC 3339 string in a GBFS feed is — and every datetime that crosses this
+boundary must be timezone-aware; a naive one is refused. The collected system's
+local time exists only on the way out: :class:`Db` reads the zone from
+``system_information`` (or the ``timezone`` setting, which wins) and applies it
+to its DuckDB session, so ``strftime`` and the fragments below render local
+wall-clock values with nothing above this module knowing a zone exists. A lake
+with no zone anywhere renders UTC, and says so in the log.
+
+Snapshot hours cross this boundary as ``YYYY-MM-DD-HH:00`` strings in that local
+time, which is what the app, its cache keys, and the metric layer speak.
+:meth:`Db.to_dt` turns one back into an instant for binding. Once a year the
+label is ambiguous — the hour that repeats when DST falls back — and it resolves
+to the later of the two instants, so the dashboard shows the newer reading and
+skips the earlier one. Both are stored.
 
 The query layer in :mod:`lastmile.db.queries` is written against the SQL
 fragments below rather than spelling DuckDB functions inline, so it stays
@@ -37,12 +48,14 @@ readable and portable.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import duckdb
 import pandas as pd
@@ -50,6 +63,11 @@ import pandas as pd
 from ..constants import TIMESTAMP_FORMAT
 from ..settings import get_settings
 from . import schema
+
+log = logging.getLogger(__name__)
+
+# Rendered when neither the configuration nor the collected system names a zone.
+FALLBACK_TIMEZONE = "UTC"
 
 # Zero-row file carrying the typed header, written when a table is created. It
 # is what gives a view over an empty table its column types, and keeps the glob
@@ -85,16 +103,15 @@ def connect(path: str | Path | None = None) -> Db:
     return Db(as_path(path))
 
 
-# --- timestamp conversion at the storage boundary -------------------------
-
-
-def to_dt(timestamp: str) -> datetime:
-    """Parse a ``YYYY-MM-DD-HH:00`` snapshot key into a datetime."""
-    return datetime.strptime(timestamp, TIMESTAMP_FORMAT)
+# --- snapshot keys ---------------------------------------------------------
+#
+# A key is a local wall-clock label, not an instant. Values fetched through a
+# Db arrive already in the lake's zone, so formatting one is enough; parsing a
+# key back into an instant needs the zone and lives on Db.
 
 
 def to_key(value: Any) -> str | None:
-    """Format a stored timestamp back into a ``YYYY-MM-DD-HH:00`` key."""
+    """Format a timestamp read from the lake into a ``YYYY-MM-DD-HH:00`` key."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -105,6 +122,18 @@ def to_key(value: Any) -> str | None:
 def keys_from_series(series: pd.Series) -> pd.Series:
     """Vectorized :func:`to_key` for a DataFrame column."""
     return pd.to_datetime(series, errors="coerce").dt.strftime(TIMESTAMP_FORMAT)
+
+
+def shift_key(key: str, hours: int) -> str:
+    """
+    A snapshot key a whole number of hours away, on the wall clock.
+
+    Label arithmetic, deliberately: the hour before ``01:00`` is ``00:00``
+    whichever of the two fall-back instants ``01:00`` stands for, which is what
+    a lookback window or a trailing-hours cutoff means to a reader.
+    """
+    moment = datetime.strptime(key, TIMESTAMP_FORMAT) + timedelta(hours=hours)
+    return moment.strftime(TIMESTAMP_FORMAT)
 
 
 def rows_from_frame(df: pd.DataFrame, columns: Sequence[str]) -> list[tuple]:
@@ -178,6 +207,12 @@ def _scrub(value: Any) -> Any:
         return None
     if isinstance(value, float) and math.isnan(value):
         return None
+    if isinstance(value, datetime) and value.tzinfo is None:
+        # The one rule about time in this package: nothing naive gets in.
+        raise ValueError(
+            f"naive datetime {value.isoformat()} bound against the lake; "
+            "every timestamp must carry a timezone"
+        )
     return value
 
 
@@ -200,8 +235,12 @@ class Db:
     DuckDB's own paramstyle, so statements go through unrewritten.
 
     Every statement runs on its own DuckDB cursor. Cursors share the catalog
-    (and therefore the views) but not their result sets, which is what keeps
-    concurrent Streamlit sessions from reading each other's rows.
+    (and therefore the views) and the session ``TimeZone``, but not their
+    result sets, which is what keeps concurrent Streamlit sessions from reading
+    each other's rows.
+
+    ``timezone`` is the zone values are rendered in, resolved when the handle is
+    opened and again by :meth:`refresh_timezone` after reference data changes.
     """
 
     def __init__(
@@ -215,6 +254,8 @@ class Db:
         self._placeholders: set[str] = set()
         for name in schema.TABLE_NAMES:
             self._register(name)
+        self.timezone = FALLBACK_TIMEZONE
+        self.refresh_timezone()
 
     def __enter__(self) -> Db:
         return self
@@ -263,6 +304,79 @@ class Db:
             if self.has_table(table):
                 self._register(table)
         return self._con.cursor()
+
+    # --- timezone ---------------------------------------------------------
+
+    def refresh_timezone(self) -> str:
+        """
+        Re-resolve the display zone and apply it to the session.
+
+        Configuration wins, because an operator may deliberately want a
+        different one; otherwise the collected system's own
+        ``system_information.timezone``. A lake that has been initialized but
+        names no zone anywhere falls back to UTC with a warning, since every
+        local hour it shows from then on is wrong for the people reading it.
+        """
+        # GLOBAL because every statement runs on its own cursor, and cursors do
+        # not inherit a session-level SET. Each handle has its own in-memory
+        # DuckDB instance, so "global" still means this lake only.
+        zone = self._resolve_timezone()
+        try:
+            ZoneInfo(zone)
+            self._con.execute(f"SET GLOBAL TimeZone = {_literal(zone)}")
+        except (ZoneInfoNotFoundError, ValueError, duckdb.Error):
+            log.warning(
+                "lake %s: unknown timezone %r; rendering UTC instead", self.root, zone
+            )
+            zone = FALLBACK_TIMEZONE
+            self._con.execute(f"SET GLOBAL TimeZone = {_literal(zone)}")
+        self.timezone = zone
+        return zone
+
+    def _resolve_timezone(self) -> str:
+        configured = get_settings().timezone.strip()
+        if configured:
+            return configured
+        if self.count("system_information") == 0:
+            # Nothing collected yet: nothing to warn about.
+            return FALLBACK_TIMEZONE
+        row = (
+            self._cursor()
+            .execute(
+                "SELECT timezone FROM system_information "
+                "WHERE timezone IS NOT NULL AND timezone <> '' LIMIT 1"
+            )
+            .fetchone()
+        )
+        if row:
+            return row[0]
+        log.warning(
+            "lake %s: system_information declares no timezone and none is "
+            "configured; local hours are rendered in UTC",
+            self.root,
+        )
+        return FALLBACK_TIMEZONE
+
+    @property
+    def tzinfo(self) -> ZoneInfo:
+        return ZoneInfo(self.timezone)
+
+    def to_dt(self, key: str) -> datetime:
+        """
+        The instant a ``YYYY-MM-DD-HH:00`` key names, in the lake's zone.
+
+        ``fold=1`` picks the later instant when the label is the repeated
+        fall-back hour, so "the latest snapshot" resolves to the latest one.
+        Returned in UTC: an aware datetime inside a repeated hour compares
+        unequal to everything, so the fold is resolved here rather than left
+        for a caller to trip over.
+        """
+        naive = datetime.strptime(key, TIMESTAMP_FORMAT)
+        return naive.replace(tzinfo=self.tzinfo, fold=1).astimezone(UTC)
+
+    def to_key(self, instant: datetime) -> str:
+        """The ``YYYY-MM-DD-HH:00`` key for an instant, in the lake's zone."""
+        return to_key(instant.astimezone(self.tzinfo))
 
     def ensure_table(self, table: str) -> None:
         """Create a table's directory and typed seed file. Idempotent."""
@@ -524,11 +638,17 @@ class Db:
     def _targets(
         self, cur: duckdb.DuckDBPyConnection, spec: schema.Table, typed: str
     ) -> list[tuple[Path, str | None]]:
-        """The file(s) this batch touches, each with the filter selecting its rows."""
+        """
+        The file(s) this batch touches, each with the filter selecting its rows.
+
+        Partitions are UTC days, not local ones, so which file a row belongs in
+        never depends on the session zone — a zone change could otherwise file
+        the same key twice.
+        """
         directory = self.dataset_dir(spec.name)
         if not spec.partition_by:
             return [(directory / DATA_FILE, None)]
-        column = quote(spec.partition_by)
+        column = f"({quote(spec.partition_by)} AT TIME ZONE 'UTC')"
         dates = cur.execute(
             f"SELECT DISTINCT strftime({column}, '{PARTITION_FORMAT}') AS d "
             f"FROM ({typed}) ORDER BY d"

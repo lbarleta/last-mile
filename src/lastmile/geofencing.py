@@ -7,8 +7,11 @@ analysis. So it is not a table at all: each capture is one ``.geojson`` file in
 the lake, named for when it was taken, openable directly in QGIS or
 ``geopandas.read_file`` without this package.
 
-    <lake>/geofencing_zones/20260101T080000.geojson
-    <lake>/geofencing_zones/20260304T090000.geojson   <- newest file is current
+    <lake>/geofencing_zones/20260101T080000Z.geojson
+    <lake>/geofencing_zones/20260304T090000Z.geojson   <- newest file is current
+
+Filenames are the capture instant in UTC, marked with the ``Z`` so nobody has
+to wonder, as with every timestamp in the lake.
 
 A refresh writes a new file only when the feed's content differs from the
 newest capture; an unchanged feed writes nothing, so the directory holds one
@@ -27,14 +30,15 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 DIRECTORY = "geofencing_zones"
 SUFFIX = ".geojson"
-# Lexicographic order on the names is chronological order on the captures.
-STAMP_FORMAT = "%Y%m%dT%H%M%S"
+# Lexicographic order on the names is chronological order on the captures,
+# which holds because every stamp is in the same zone.
+STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
 def capture_dir(root: str | Path) -> Path:
@@ -55,8 +59,9 @@ def latest(root: str | Path) -> Path | None:
 
 
 def observed_at(path: Path) -> datetime:
-    """When a capture was taken, read back from its filename."""
-    return datetime.strptime(path.name.removesuffix(SUFFIX), STAMP_FORMAT)
+    """When a capture was taken, read back from its filename. Aware, UTC."""
+    stamp = datetime.strptime(path.name.removesuffix(SUFFIX), STAMP_FORMAT)
+    return stamp.replace(tzinfo=UTC)
 
 
 def document(data: dict[str, Any]) -> dict[str, Any]:
@@ -92,9 +97,12 @@ def record(root: str | Path, doc: dict[str, Any], when: datetime) -> bool:
         if _canonical(json.loads(current.read_text(encoding="utf-8"))) == content:
             return False
 
+    if when.tzinfo is None:
+        raise ValueError("capture time must be timezone-aware")
     directory = capture_dir(root)
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{when.strftime(STAMP_FORMAT)}{SUFFIX}"
+    stamp = when.astimezone(UTC).strftime(STAMP_FORMAT)
+    path = directory / f"{stamp}{SUFFIX}"
     temporary = path.with_name(path.name + ".tmp")
     # Compact on purpose: a big system's collection runs to megabytes, and
     # these files are for tools, which do not care about whitespace.

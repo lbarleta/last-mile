@@ -18,8 +18,10 @@ Free-floating vehicles: no region in GBFS, only coordinates → all attributed t
 one region, `FREE_FLOATING_REGION` in `constants.py`. Still the Bay Wheels
 default; a system whose regions are named differently needs it changed.
 
-Timestamps: the collected system's own local hour (from its
-`system_information.timezone`), key `YYYY-MM-DD-HH:00`.
+Timestamps: stored as UTC instants, shown in the collected system's own local
+time (from its `system_information.timezone`), key `YYYY-MM-DD-HH:00`. Metric
+definitions that say "hour" mean that local label. See the README's
+*Timestamps* section for the DST behaviour.
 
 ---
 
