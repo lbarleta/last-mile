@@ -21,6 +21,7 @@ import argparse
 import logging
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from . import __version__
@@ -50,11 +51,62 @@ def _describe(args: argparse.Namespace) -> str:
     return db.describe(db.as_path(args.lake))
 
 
-# --- commands ---------------------------------------------------------------
+# --- reporting --------------------------------------------------------------
+
+# Collection paths in the order a report lists them.
+PATHS = ("snapshot", "reference", "geofencing")
 
 
-def _report_reference(results: dict) -> None:
-    """One line per reference feed, naming only what actually changed."""
+def _error(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _snapshot_summary(result: dict) -> str:
+    """The hour stored and the rows that were new, naming only non-empty tables."""
+    written = ", ".join(f"{n:,} {name}" for name, n in result["rows"].items() if n)
+    return f"{result['timestamp']}: {written or 'no new rows'}"
+
+
+def _reference_summary(results: dict) -> str:
+    """Only the feeds that changed, with their counts; else ``no changes``."""
+    changed = []
+    for name, counts in results.items():
+        parts = ", ".join(
+            f"{counts[kind]} {kind}"
+            for kind in ("added", "changed", "removed")
+            if counts[kind]
+        )
+        if parts:
+            changed.append(f"{name} {parts}")
+    return "; ".join(changed) or "no changes"
+
+
+def _geofencing_summary(counts: dict) -> str:
+    """Geofencing is documents, not rows: whether this run archived a new one."""
+    if not counts["captures"]:
+        return "feed not published"
+    state = "new capture" if counts["captured"] else "unchanged"
+    return f"{state}: {counts['features']:,} zones, {counts['captures']} capture(s)"
+
+
+SUMMARIES = {
+    "snapshot": _snapshot_summary,
+    "reference": _reference_summary,
+    "geofencing": _geofencing_summary,
+}
+
+
+def _report_paths(results: dict) -> None:
+    """One line per path that ran: its summary, or ``FAILED`` and the cause."""
+    for name in PATHS:
+        if name in results["errors"]:
+            print(f"  {name:<11} FAILED {_error(results['errors'][name])}")
+        elif name in results:
+            print(f"  {name:<11} {SUMMARIES[name](results[name])}")
+
+
+def _report_reference_totals(results: dict) -> None:
+    """One line per reference feed with its row count; for init-db."""
     for name, counts in results.items():
         changes = ", ".join(
             f"{counts[kind]} {kind}"
@@ -66,62 +118,114 @@ def _report_reference(results: dict) -> None:
         )
 
 
-def _report_geofencing(counts: dict) -> None:
-    """Geofencing is documents, not rows: zones in the newest capture."""
-    note = " (new capture archived)" if counts["captured"] else ""
-    print(
-        f"  {'geofencing_zones':<24} {counts['features']:>6,} zones, "
-        f"{counts['captures']} capture(s){note}"
-    )
+def _confirm(question: str) -> bool:
+    """Ask on stdin. Anything but an explicit yes, including no stdin, is no."""
+    try:
+        answer = input(f"{question} [y/N] ")
+    except (EOFError, OSError):
+        answer = ""
+    if not sys.stdin.isatty():
+        print()  # nothing echoed the answer, so end the prompt line ourselves
+    return answer.strip().lower() in ("y", "yes")
+
+
+def _lake_state(lake: Path) -> str:
+    """What is at the lake path now, for the init-db prompt."""
+    if not lake.exists():
+        return "does not exist yet"
+    if lake.is_dir() and not any(lake.iterdir()):
+        return "empty"
+    return "exists but is not initialized"
+
+
+# --- commands ---------------------------------------------------------------
 
 
 def cmd_init_db(args: argparse.Namespace) -> int:
-    """Lay out the lake and load everything but a snapshot. Safe to re-run."""
-    from . import collect
+    """
+    Lay out the lake and load everything but a snapshot.
+
+    Refuses a lake that is already initialized — updating one is ``collect``'s
+    job — and otherwise shows where the lake will go and which configuration is
+    in effect, then asks before touching the disk, so a bare ``lastmile
+    init-db`` cannot create a lake on default settings unnoticed.
+    """
+    from . import collect, db, settings
     from .db import queries, schema
 
     conn = _connect(args)
-    print(f"Initializing {_describe(args)}…")
+    lake = db.as_path(args.lake)
+    if conn.is_initialized():
+        info = queries.get_system_info(conn) or {}
+        _, last = queries.get_timestamp_bounds(conn)
+        system = info.get("name") or info.get("system_id") or "unknown system"
+        snapshots = f"last snapshot {last}" if last else "no snapshots yet"
+        print(
+            f"Lake {lake} is already initialized ({system}, {snapshots}); "
+            "`lastmile collect` updates it.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"Lake:    {lake} ({_lake_state(lake)})")
+    print(f"Config:  {settings.find_config() or 'none found; built-in defaults apply'}")
+    print(f"Feeds:   {settings.get_settings().feeds_url}")
+    if not _confirm("Create the lake and load reference data?"):
+        print("Aborted; nothing was written.")
+        return 1
+
     schema.create_all(conn)
     results = collect.collect(conn, snapshot=False)
-    system = queries.get_system_info(conn) or {}
-    print(
-        f"Reading {system.get('name') or system.get('system_id') or 'system'} "
-        f"on GBFS {system.get('gbfs_version')} ({conn.timezone})."
-    )
-    _report_reference(results["reference"])
-    _report_geofencing(results["geofencing"])
-    return 0
+    if "reference" in results:
+        system = queries.get_system_info(conn) or {}
+        print(
+            f"Reading {system.get('name') or system.get('system_id') or 'system'} "
+            f"on GBFS {system.get('gbfs_version')} ({conn.timezone})."
+        )
+        _report_reference_totals(results["reference"])
+    if "geofencing" in results:
+        print(
+            f"  {'geofencing_zones':<24} {_geofencing_summary(results['geofencing'])}"
+        )
+    for name, exc in results["errors"].items():
+        print(f"  {name:<24} FAILED {_error(exc)}")
+    return 1 if results["errors"] else 0
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
-    """Run the selected collection paths, or all of them when none is named."""
+    """
+    Run the selected collection paths, or all of them when none is named.
+
+    Prints one block per run, meant to be appended to a log by cron: a stamped
+    header, then one line per path saying exactly what it stored or why it
+    failed. Exit status is 1 when any path failed.
+    """
     from . import collect
 
     conn = _connect(args)
+    lake = _describe(args)
     if not conn.is_initialized():
         print(
-            f"Lake {_describe(args)} is not initialized; run `lastmile init-db` first.",
+            f"Lake {lake} is not initialized; run `lastmile init-db` first.",
             file=sys.stderr,
         )
         return 1
 
     every = not (args.snapshot or args.reference or args.geofencing)
-    results = collect.collect(
-        conn,
-        snapshot=args.snapshot or every,
-        reference=args.reference or every,
-        geofencing=args.geofencing or every,
-    )
-    if "reference" in results:
-        _report_reference(results["reference"])
-    if "geofencing" in results:
-        _report_geofencing(results["geofencing"])
-    if "snapshot" in results:
-        result = results["snapshot"]
-        written = ", ".join(f"{n:,} {name}" for name, n in result["rows"].items())
-        print(f"{result['timestamp']}: {written} rows written to {_describe(args)}")
-    return 0
+    started = datetime.now(conn.tzinfo).strftime("%Y-%m-%d %H:%M:%S %Z")
+    print(f"{started} collect {lake}")
+    try:
+        results = collect.collect(
+            conn,
+            snapshot=args.snapshot or every,
+            reference=args.reference or every,
+            geofencing=args.geofencing or every,
+        )
+    except Exception as exc:
+        print(f"  FAILED {_error(exc)}")
+        return 1
+    _report_paths(results)
+    return 1 if results["errors"] else 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:

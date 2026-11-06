@@ -44,6 +44,11 @@ def collect(
     """
     Run the selected paths, all three by default; results keyed by path name.
 
+    A path that raises does not stop the others: its exception is returned under
+    ``errors`` (always present, empty on a clean run) instead of a result, so a
+    flaky reference feed never costs the hourly snapshot. Opening the client is
+    the one shared step, and a failed discovery request still raises.
+
     Order is immaterial to what is stored: every path writes UTC instants. It
     only affects the local label ``snapshot`` reports, which is rendered in the
     lake's zone as of the refresh — and that zone is already set on any
@@ -51,13 +56,19 @@ def collect(
     """
     client = client or GbfsClient()
     observed_at = observed_at or datetime.now(UTC)
-    results = {}
-    if reference:
-        results["reference"] = refresh_reference_data(conn, client, observed_at)
-    if geofencing:
-        results["geofencing"] = refresh_geofencing(conn, client, observed_at)
-    if snapshot:
-        results["snapshot"] = collect_snapshot(conn, client, observed_at)
+    paths = (
+        ("reference", reference, refresh_reference_data),
+        ("geofencing", geofencing, refresh_geofencing),
+        ("snapshot", snapshot, collect_snapshot),
+    )
+    results: dict = {"errors": {}}
+    for name, selected, run in paths:
+        if not selected:
+            continue
+        try:
+            results[name] = run(conn, client, observed_at)
+        except Exception as exc:
+            results["errors"][name] = exc
     return results
 
 
