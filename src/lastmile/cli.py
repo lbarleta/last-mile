@@ -154,7 +154,7 @@ def cmd_init_db(args: argparse.Namespace) -> int:
         system = info.get("name") or info.get("system_id") or "unknown system"
         snapshots = f"last snapshot {last}" if last else "no snapshots yet"
         print(
-            f"Lake {lake} is already initialized ({system}, {snapshots}); "
+            f"Lake {lake} is already initialized ({system}, {snapshots}); ",
             file=sys.stderr,
         )
         return 1
