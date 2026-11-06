@@ -14,7 +14,7 @@ git clone https://github.com/lbarleta/last-mile.git
 cd last-mile && python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-lastmile init-db      # create the lake, load reference data
+lastmile init-db      # create the lake, load reference data (asks first)
 lastmile collect      # one hourly collection; run from cron
 lastmile status       # what the warehouse holds
 lastmile dashboard    # serve the Streamlit app

@@ -225,15 +225,28 @@ def test_nothing_is_written_outside_the_declared_tables(lake, gbfs_client):
 
 def test_collect_runs_every_path_by_default(lake, gbfs_client):
     results = collect.collect(lake, client=gbfs_client("v30"), observed_at=NOW)
-    assert set(results) == {"reference", "geofencing", "snapshot"}
+    assert set(results) == {"reference", "geofencing", "snapshot", "errors"}
 
 
 def test_collect_skips_the_paths_switched_off(lake, gbfs_client):
     results = collect.collect(
         lake, snapshot=False, client=gbfs_client("v30"), observed_at=NOW
     )
-    assert set(results) == {"reference", "geofencing"}
+    assert set(results) == {"reference", "geofencing", "errors"}
     assert lake.count("station_status") == 0
+
+
+def test_a_failing_path_does_not_stop_the_others(lake, gbfs_client, monkeypatch):
+    client = gbfs_client("v30")
+    monkeypatch.setattr(
+        collect,
+        "refresh_reference_data",
+        lambda *a: (_ for _ in ()).throw(OSError("x")),
+    )
+    results = collect.collect(lake, client=client, observed_at=NOW)
+    assert "reference" not in results
+    assert isinstance(results["errors"]["reference"], OSError)
+    assert lake.count("station_status") > 0
 
 
 def test_every_path_of_one_run_observes_the_same_instant(lake, gbfs_client):
