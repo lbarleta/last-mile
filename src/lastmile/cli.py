@@ -142,14 +142,7 @@ def _lake_state(lake: Path) -> str:
 
 
 def cmd_init_db(args: argparse.Namespace) -> int:
-    """
-    Lay out the lake and load everything but a snapshot.
-
-    Refuses a lake that is already initialized — updating one is ``collect``'s
-    job — and otherwise shows where the lake will go and which configuration is
-    in effect, then asks before touching the disk, so a bare ``lastmile
-    init-db`` cannot create a lake on default settings unnoticed.
-    """
+    """Create the lake and load reference data."""
     from . import collect, db, settings
     from .db import queries, schema
 
@@ -162,7 +155,6 @@ def cmd_init_db(args: argparse.Namespace) -> int:
         snapshots = f"last snapshot {last}" if last else "no snapshots yet"
         print(
             f"Lake {lake} is already initialized ({system}, {snapshots}); "
-            "`lastmile collect` updates it.",
             file=sys.stderr,
         )
         return 1
@@ -193,13 +185,7 @@ def cmd_init_db(args: argparse.Namespace) -> int:
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
-    """
-    Run the selected collection paths, or all of them when none is named.
-
-    Prints one block per run, meant to be appended to a log by cron: a stamped
-    header, then one line per path saying exactly what it stored or why it
-    failed. Exit status is 1 when any path failed.
-    """
+    """Run the selected collection paths, or all when none is named."""
     from . import collect
 
     conn = _connect(args)
