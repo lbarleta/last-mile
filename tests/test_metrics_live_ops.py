@@ -15,11 +15,10 @@ from seed import START, STATUS_COLUMNS, key
 
 from lastmile.metrics import Metrics, coverage
 from lastmile.metrics.live_ops import station_status_bucket
-from lastmile.settings import ENV_PREFIX, get_settings
 
 
 @pytest.fixture
-def boundary(tmp_path, monkeypatch):
+def boundary(tmp_path, configure):
     """A square around the seeded stations, standing in for the city limits."""
     path = tmp_path / "boundary.geojson"
     square = [
@@ -44,8 +43,8 @@ def boundary(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv(f"{ENV_PREFIX}_BOUNDARY_GEOJSON", str(path))
-    get_settings.cache_clear()
+    # Buffering is in the projected CRS's units; the default (WGS84) is degrees.
+    configure(system={"boundary_geojson": str(path), "projected_crs": "EPSG:3310"})
     coverage._load_boundary.cache_clear()
     return path
 
@@ -72,9 +71,8 @@ def test_station_status_bucket(bikes, docks, expected):
     assert station_status_bucket(row(bikes, docks)) == expected
 
 
-def test_low_threshold_comes_from_settings(monkeypatch):
-    monkeypatch.setenv(f"{ENV_PREFIX}_LOW_STATION_BIKE_SHARE", "0.5")
-    get_settings.cache_clear()
+def test_low_threshold_comes_from_settings(configure):
+    configure(metrics={"low_station_bike_share": 0.5})
     assert station_status_bucket(row(4, 16)) == "low"
 
 

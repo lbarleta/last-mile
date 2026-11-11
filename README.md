@@ -20,8 +20,27 @@ lastmile status       # what the warehouse holds
 lastmile dashboard    # serve the Streamlit app
 ```
 
-Nothing needs configuring to try it. The lake defaults to `data/lake` and the
-feed to Austin's GBFS 3.0.
+Nothing needs configuring to try it: the shipped `lastmile.toml` collects
+Austin into `data/lake/austin` and also declares Curitiba. Each GBFS system is
+a `[systems.<name>]` table; `--system` on any command picks one and
+`default_system` applies otherwise.
+
+```toml
+[general]
+default_system = "austin"
+
+[systems.austin]
+lake_path = "data/lake/austin"
+feeds_url = "https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
+
+[systems.curitiba]
+lake_path = "data/lake/curitiba"
+feeds_url = "https://curitiba.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
+```
+
+```bash
+lastmile collect --system curitiba  # default_system when omitted
+```
 
 ```cron
 5 * * * * cd /path/to/last-mile && .venv/bin/lastmile collect >> logs/collect.log 2>&1
@@ -98,10 +117,18 @@ full. **Trends**: the same indicators over time. Metric definitions are in
 
 ## Configuration
 
-Defaults in `Settings` (`src/lastmile/settings.py`), overridden by
-`lastmile.toml`, overridden by the environment or `.env`. Any key maps to
-`LASTMILE_<KEY>` uppercased. Nothing is required; the two a new deployment
-usually sets are `feeds_url` and `boundary_geojson`.
+One file, `lastmile.toml`, found at or above the working directory or wherever
+`LASTMILE_CONFIG` points; that variable is the only thing read from the
+environment. Every key is optional except a system's `lake_path` and
+`feeds_url`, and defaults for the rest are on `Settings` in
+`src/lastmile/settings.py`.
+
+- `[general]`: `default_system`, `request_timeout_s`, `umami_website_id`.
+- `[systems.<name>]`: what differs between bike-share systems — `lake_path`,
+  `feeds_url`, `feeds_lang`, `timezone`, `dashboard_title`,
+  `boundary_geojson`, `projected_crs`. A system's table is self-contained;
+  nothing is inherited from another.
+- `[metrics]`: thresholds and windows, shared by every system.
 
 ## Tests
 

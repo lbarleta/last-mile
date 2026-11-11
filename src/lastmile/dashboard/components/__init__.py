@@ -50,7 +50,7 @@ def resolve_lake_path() -> str | None:
 
 
 def inject_umami() -> None:
-    """Load Umami when umami_website_id is configured (lastmile.toml or .env)."""
+    """Load Umami when umami_website_id is set under [general] in lastmile.toml."""
     website_id = get_settings().umami_website_id.strip()
     if not website_id:
         return

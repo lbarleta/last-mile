@@ -11,8 +11,10 @@ The ``lastmile`` command.
     lastmile weather               not implemented
     lastmile forecast              not implemented
 
-Every command takes ``--lake`` and ``--config``. This module only prints;
-collection is :mod:`lastmile.collect`'s and the lake layout :mod:`lastmile.db.schema`'s.
+Every command takes ``--system`` and ``--config``, which pick the configuration
+the rest of the run reads (see :mod:`lastmile.settings`). This module only
+prints; collection is :mod:`lastmile.collect`'s and the lake layout
+:mod:`lastmile.db.schema`'s.
 """
 
 from __future__ import annotations
@@ -25,30 +27,39 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
-from .settings import reload_settings
+from .settings import find_config, reload_settings, select_system
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--lake",
+        "--system",
         default=None,
-        help="Parquet lake directory (default: LASTMILE_LAKE_PATH)",
+        metavar="NAME",
+        help="Configured GBFS system to work on "
+        "(default: default_system in lastmile.toml)",
     )
     parser.add_argument(
         "--config", default=None, help="Path to lastmile.toml (default: auto-discover)"
     )
 
 
-def _connect(args: argparse.Namespace):
+def _connect():
     from . import db
 
-    return db.connect(args.lake)
+    return db.connect()
 
 
-def _describe(args: argparse.Namespace) -> str:
+def _lake() -> Path:
     from . import db
 
-    return db.describe(db.as_path(args.lake))
+    return db.as_path(None)
+
+
+def _system_label() -> str:
+    """``austin`` when a named system is active, else an empty string."""
+    from .settings import get_settings
+
+    return get_settings().system
 
 
 # --- reporting --------------------------------------------------------------
@@ -143,22 +154,25 @@ def _lake_state(lake: Path) -> str:
 
 def cmd_init_db(args: argparse.Namespace) -> int:
     """Create the lake and load reference data."""
-    from . import collect, db, settings
+    from . import collect, settings
     from .db import queries, schema
 
-    conn = _connect(args)
-    lake = db.as_path(args.lake)
+    conn = _connect()
+    lake = _lake()
     if conn.is_initialized():
         info = queries.get_system_info(conn) or {}
         _, last = queries.get_timestamp_bounds(conn)
         system = info.get("name") or info.get("system_id") or "unknown system"
         snapshots = f"last snapshot {last}" if last else "no snapshots yet"
         print(
-            f"Lake {lake} is already initialized ({system}, {snapshots}); ",
+            f"Lake {lake} is already initialized ({system}, {snapshots}); "
+            "`lastmile collect` updates it.",
             file=sys.stderr,
         )
         return 1
 
+    if _system_label():
+        print(f"System:  {_system_label()}")
     print(f"Lake:    {lake} ({_lake_state(lake)})")
     print(f"Config:  {settings.find_config() or 'none found; built-in defaults apply'}")
     print(f"Feeds:   {settings.get_settings().feeds_url}")
@@ -188,8 +202,8 @@ def cmd_collect(args: argparse.Namespace) -> int:
     """Run the selected collection paths, or all when none is named."""
     from . import collect
 
-    conn = _connect(args)
-    lake = _describe(args)
+    conn = _connect()
+    lake = str(_lake())
     if not conn.is_initialized():
         print(
             f"Lake {lake} is not initialized; run `lastmile init-db` first.",
@@ -199,7 +213,8 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
     every = not (args.snapshot or args.reference or args.geofencing)
     started = datetime.now(conn.tzinfo).strftime("%Y-%m-%d %H:%M:%S %Z")
-    print(f"{started} collect {lake}")
+    target = f"{_system_label()} ({lake})" if _system_label() else lake
+    print(f"{started} collect {target}")
     try:
         results = collect.collect(
             conn,
@@ -218,8 +233,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     """Print what the lake holds, table by table."""
     from .db import queries, schema
 
-    conn = _connect(args)
-    print(f"Lake: {_describe(args)}")
+    conn = _connect()
+    which = f" (system {_system_label()})" if _system_label() else ""
+    print(f"Lake: {_lake()}{which}")
     missing = schema.missing_tables(conn)
     if missing:
         print(f"Missing datasets: {', '.join(missing)} — run `lastmile init-db`")
@@ -266,7 +282,10 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     cmd = [sys.executable, "-m", "streamlit", "run", str(main_py)]
     if args.port:
         cmd += ["--server.port", str(args.port)]
-    cmd += args.streamlit_args
+    cmd += [a for a in args.streamlit_args if a != "--"]
+    if args.system:
+        # Streamlit hands anything after its own ``--`` to the script.
+        cmd += ["--", "--system", args.system]
     return subprocess.call(cmd)
 
 
@@ -361,7 +380,22 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if getattr(args, "config", None):
         os.environ["LASTMILE_CONFIG"] = args.config
-        reload_settings()
+    select_system(getattr(args, "system", None))
+    try:
+        # Loaded here, before any command runs, so a bad --system or --config
+        # is one line on stderr rather than a traceback from deep in a command.
+        loaded = reload_settings()
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"lastmile: {exc}", file=sys.stderr)
+        return 2
+    if not loaded.system:
+        where = find_config() or "any lastmile.toml at or above the working directory"
+        print(
+            f"lastmile: no [systems.<name>] table in {where}; "
+            "configure a GBFS system first.",
+            file=sys.stderr,
+        )
+        return 2
     try:
         return args.func(args)
     except KeyboardInterrupt:

@@ -451,6 +451,8 @@ class GbfsClient:
         """
         settings = get_settings()
         self.feeds_url = feeds_url or settings.feeds_url
+        if not self.feeds_url:
+            raise ValueError("no feeds_url configured for the active system")
         self.lang = lang or settings.feeds_lang
         self.timeout = timeout if timeout is not None else settings.request_timeout_s
         self.version, self.feeds = self._discover()

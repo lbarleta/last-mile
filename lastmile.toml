@@ -1,58 +1,48 @@
-# LastMile configuration.
-#
-# Every key is optional — delete one and the built-in default applies (from
-# src/lastmile/settings.py). Any key can be overridden by an environment 
-# variable named LASTMILE_<KEY>. Secrets belong in .env rather than here:
-#
-#   lake_path         ->  LASTMILE_LAKE_PATH
-#   coverage_radius_m ->  LASTMILE_COVERAGE_RADIUS_M
-#
+# LastMile configuration. Defaults for omitted keys are in src/lastmile/settings.py.
 
-# --- warehouse ---------------------------------------------------------------
-# Directory holding the Parquet data lake. Can be initiate with CLI tool.
-lake_path = "data/lake"
-
-# --- GBFS feed ---------------------------------------------------------------
-# Supports spec 2.3 or 3.x. The 3.0 feed is preferred.
-feeds_url = "https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
-# Language used to pick localized names out of a 3.x feed, and to choose the
-# language block on a 2.x discovery document.
-feeds_lang = "en"
-# Zone the hourly snapshot key is bucketed in. Leave blank to use the system's
-# own system_information.timezone, which is what keeps this feed-agnostic.
-timezone = ""
+[general]
+default_system = "austin"
 request_timeout_s = 30
+# Umami analytics id; blank disables.
+umami_website_id = ""
 
-# --- metrics -----------------------------------------------------------------
-# Daytime ops window (local hour, inclusive). Snapshots outside it are ignored
-# when scoring problematic stations.
-ops_day_hour_start = 7
-ops_day_hour_end = 20
-# A station is flagged if it was empty or full in any of the trailing N daytime hours.
-problematic_lookback_hours = 3
-# How far to look for a non-problematic station to rebalance from.
-backup_station_radius_m = 900
-# Free-floating e-bikes at or below this remaining range count as low-range.
-low_range_meters = 5000
-# A station holding both bikes and docks but below this bike share is "low".
-low_station_bike_share = 0.2
-# Trailing window for the "typical for this hour" supply baseline. Holds hour
-# of day fixed, because the ratio swings on a daily cycle.
-supply_baseline_days = 28
-# Overnight hours used to estimate fleet size, when nearly all bikes are parked.
-fleet_baseline_hours = [0, 1, 2, 3, 4]
+# One table per GBFS system; `lastmile <cmd> --system <name>` picks one.
+# A blank timezone uses the system's own.
 
-# --- walk-shed coverage --------------------------------------------------------
-# Radius around each available bike (~3-minute walk).
-coverage_radius_m = 300
-# City boundary used for the coverage map. Swap in your own GeoJSON to run the
-# dashboard over a different city.
-boundary_geojson = "assets/austin.geojson"
-
-# Projected CRS used for buffering
+[systems.austin]
+lake_path = "data/lake/austin"
+feeds_url = "https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
+feeds_lang = "en"
+timezone = ""
+dashboard_title = "Last Mile · Austin"
+boundary_geojson = "assets/austin.json"
 projected_crs = "EPSG:4269"
 
-# --- dashboard -----------------------------------------------------------------
-dashboard_title = "Last Mile"
-# Optional analytics; set LASTMILE_UMAMI_WEBSITE_ID in .env.
-umami_website_id = ""
+[systems.curitiba]
+lake_path = "data/lake/curitiba"
+# Feed licensed CC-BY-4.0.
+feeds_url = "https://curitiba.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
+feeds_lang = "en"
+timezone = ""
+dashboard_title = "Last Mile · Curitiba"
+boundary_geojson = "assets/curitiba.json"
+projected_crs = "EPSG:31982"
+
+[metrics]
+# Ops day (local hours, inclusive) for problematic-station scoring.
+ops_day_hour_start = 7
+ops_day_hour_end = 20
+# Empty or full in any of the trailing N daytime hours flags a station.
+problematic_lookback_hours = 3
+# Search radius for a station to rebalance from.
+backup_station_radius_m = 900
+# Free-floating e-bikes at or below this range are low-range.
+low_range_meters = 5000
+# Bike share below this, with docks free, is "low".
+low_station_bike_share = 0.2
+# Trailing days for the "typical for this hour" supply baseline.
+supply_baseline_days = 28
+# Hours (local) when the parked fleet approximates fleet size.
+fleet_baseline_hours = [0, 1, 2, 3, 4]
+# Walk-shed radius around each available bike.
+coverage_radius_m = 300
