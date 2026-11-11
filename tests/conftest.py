@@ -13,7 +13,6 @@ a real feed takes.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -23,30 +22,64 @@ from lastmile import settings
 FIXTURES = Path(__file__).parent / "fixtures" / "gbfs"
 
 
+def _toml_value(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def write_config(tmp_path: Path, *, general=None, system=None, metrics=None) -> Path:
+    """
+    Write ``tmp_path/lastmile.toml``: one system, ``test``, whose lake is
+    ``tmp_path/lake`` and whose feed resolves to the recorded fixtures by
+    name. Keyword tables add or override keys in the matching TOML table.
+    """
+    tables = {
+        "general": {"default_system": "test", **(general or {})},
+        "systems.test": {
+            "lake_path": str(tmp_path / "lake"),
+            "feeds_url": "gbfs.json",
+            **(system or {}),
+        },
+        "metrics": dict(metrics or {}),
+    }
+    body = "".join(
+        f"[{name}]\n" + "".join(f"{k} = {_toml_value(v)}\n" for k, v in keys.items())
+        for name, keys in tables.items()
+    )
+    path = tmp_path / "lastmile.toml"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
 @pytest.fixture(autouse=True)
 def fresh_settings(monkeypatch, tmp_path):
     """
-    Each test reads settings cold, with nothing inherited from the host.
+    Each test reads settings cold, from its own config in tmp.
 
-    The repo's own lastmile.toml and .env would otherwise leak in — pointing
-    tests at a real lake, or at whichever feed the developer last collected.
-    Settings also read ``.env`` from the working directory, so run from tmp.
+    The repo's own lastmile.toml would otherwise leak in — pointing tests at a
+    real lake, or at whichever feed the developer last collected.
     """
     monkeypatch.chdir(tmp_path)
-    for name in list(os.environ):
-        if name.startswith(f"{settings.ENV_PREFIX}_"):
-            monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv(f"{settings.ENV_PREFIX}_CONFIG", str(_empty_config(tmp_path)))
-    monkeypatch.setenv(f"{settings.ENV_PREFIX}_LAKE_PATH", str(tmp_path / "lake"))
-    settings.get_settings.cache_clear()
+    monkeypatch.setenv(settings.CONFIG_ENV, str(write_config(tmp_path)))
+    settings.select_system(None)
     yield
-    settings.get_settings.cache_clear()
+    settings.select_system(None)
 
 
-def _empty_config(tmp_path: Path) -> Path:
-    path = tmp_path / "lastmile.toml"
-    path.write_text("", encoding="utf-8")
-    return path
+@pytest.fixture
+def configure(tmp_path):
+    """Rewrite this test's config with extra keys and reload settings."""
+
+    def _configure(**tables):
+        write_config(tmp_path, **tables)
+        return settings.reload_settings()
+
+    return _configure
 
 
 @pytest.fixture

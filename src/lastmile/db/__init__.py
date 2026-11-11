@@ -87,7 +87,7 @@ def resolve_lake_path() -> Path:
 
 
 def as_path(target: str | Path | None) -> Path:
-    """Normalize an explicit ``--lake`` argument, falling back to settings."""
+    """Normalize an explicit lake path, falling back to the configured one."""
     if target is None or (isinstance(target, str) and not target.strip()):
         return resolve_lake_path()
     return Path(target).expanduser()

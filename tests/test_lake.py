@@ -382,12 +382,9 @@ def test_the_system_timezone_renders_local_labels(lake):
     assert lake.to_key(utc("2026-10-29-13:00")) == "2026-10-29-08:00"
 
 
-def test_the_configured_timezone_wins(lake, monkeypatch):
-    from lastmile import settings
-
+def test_the_configured_timezone_wins(lake, configure):
     with_system_timezone(lake, "America/Chicago")
-    monkeypatch.setenv("LASTMILE_TIMEZONE", "Europe/Lisbon")
-    settings.get_settings.cache_clear()
+    configure(system={"timezone": "Europe/Lisbon"})
     assert lake.refresh_timezone() == "Europe/Lisbon"
 
 

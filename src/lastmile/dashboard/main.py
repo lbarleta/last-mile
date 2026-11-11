@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import streamlit as st
 
 from lastmile.dashboard.components import (
@@ -12,7 +14,11 @@ from lastmile.dashboard.components import (
     resolve_lake_path,
 )
 from lastmile.dashboard.views import live_ops, map_view, trends
-from lastmile.settings import get_settings
+from lastmile.settings import get_settings, select_system
+
+# `lastmile dashboard --system X` passes the system through as a script arg.
+if "--system" in sys.argv[1:]:
+    select_system(sys.argv[sys.argv.index("--system") + 1])
 
 st.set_page_config(
     page_title=get_settings().dashboard_title,
@@ -28,7 +34,7 @@ lake_path = resolve_lake_path()
 if lake_path is None:
     st.error(
         "No warehouse found. Run `lastmile init-db` to create one, or point "
-        "`LASTMILE_LAKE_PATH` at an existing lake directory."
+        "this system's `lake_path` in lastmile.toml at an existing lake."
     )
     st.stop()
 
