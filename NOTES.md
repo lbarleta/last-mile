@@ -38,7 +38,7 @@ definitions that say "hour" mean that local label. See the README's
 ### Coverage (headline, second)
 
 - Share of the city's land area within **300 m** (~3 min walk) of an available bike (docked or free-floating)
-- Buffer in the configured projected CRS, city boundary from `boundary_geojson` (ships with SF county; swap it per deployment)
+- All coordinates are WGS84 (GBFS and GeoJSON both require it); buffers and areas are computed in the UTM zone the boundary falls in, chosen by pyproj. City boundary from `boundary_geojson`
 - Delta: vs prior hour (unlike supply balance)
 
 ### Problematic stations

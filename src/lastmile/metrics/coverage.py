@@ -9,7 +9,9 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from pyproj import Transformer
+from pyproj import CRS, Transformer
+from pyproj.aoi import AreaOfInterest
+from pyproj.database import query_utm_crs_info
 from shapely import transform
 from shapely.geometry import Point, mapping, shape
 from shapely.ops import unary_union
@@ -17,6 +19,11 @@ from shapely.ops import unary_union
 from ..settings import get_settings
 
 LatLon = tuple[float, float]
+
+# Every coordinate in the system is WGS84: GBFS requires it for feeds and
+# RFC 7946 for the boundary GeoJSON. Buffering and area need metres, so the
+# boundary picks the UTM zone it falls in and the maths happens there.
+WGS84 = "EPSG:4326"
 
 # Degrees of padding around the boundary bounds (~radius + margin) before projecting.
 _BBOX_PAD_DEG = 0.01
@@ -43,26 +50,27 @@ def load_boundary() -> Any:
 
 
 @lru_cache(maxsize=4)
-def _transformers(projected_crs: str) -> tuple[Transformer, Transformer]:
-    to_proj = Transformer.from_crs("EPSG:4326", projected_crs, always_xy=True)
-    to_wgs = Transformer.from_crs(projected_crs, "EPSG:4326", always_xy=True)
-    return to_proj, to_wgs
+def _transformers(
+    bounds: tuple[float, float, float, float],
+) -> tuple[Transformer, Transformer]:
+    """To and from the UTM zone covering ``bounds`` (WGS84 minx, miny, maxx, maxy)."""
+    minx, miny, maxx, maxy = bounds
+    candidates = query_utm_crs_info(
+        datum_name="WGS 84",
+        area_of_interest=AreaOfInterest(minx, miny, maxx, maxy),
+    )
+    if not candidates:
+        raise ValueError(f"no UTM zone covers the boundary bounds {bounds}")
+    utm = CRS.from_authority(candidates[0].auth_name, candidates[0].code)
+    to_utm = Transformer.from_crs(WGS84, utm, always_xy=True)
+    to_wgs = Transformer.from_crs(utm, WGS84, always_xy=True)
+    return to_utm, to_wgs
 
 
 def _reproject(geom: Any, transformer: Transformer) -> Any:
     return transform(
         geom, lambda xy: np.column_stack(transformer.transform(xy[:, 0], xy[:, 1]))
     )
-
-
-def _to_projected(geom: Any) -> Any:
-    to_proj, _ = _transformers(get_settings().projected_crs)
-    return _reproject(geom, to_proj)
-
-
-def _to_wgs84(geom: Any) -> Any:
-    _, to_wgs = _transformers(get_settings().projected_crs)
-    return _reproject(geom, to_wgs)
 
 
 def _collect_points(
@@ -123,8 +131,9 @@ def compute_coverage(
     if radius_m is None:
         radius_m = get_settings().coverage_radius_m
     boundary_wgs = load_boundary()
-    boundary_proj = _to_projected(boundary_wgs)
-    boundary_area = float(boundary_proj.area)
+    to_utm, to_wgs = _transformers(boundary_wgs.bounds)
+    boundary_utm = _reproject(boundary_wgs, to_utm)
+    boundary_area = float(boundary_utm.area)
     empty = {
         "pct_coverage": 0.0,
         "covered_area_m2": 0.0,
@@ -146,13 +155,12 @@ def compute_coverage(
     if not points:
         return empty
 
-    to_proj, _ = _transformers(get_settings().projected_crs)
     buffers = []
     for lat, lon in points:
-        x, y = to_proj.transform(lon, lat)
+        x, y = to_utm.transform(lon, lat)
         buffers.append(Point(x, y).buffer(radius_m, quad_segs=8))
 
-    covered = unary_union(buffers).intersection(boundary_proj)
+    covered = unary_union(buffers).intersection(boundary_utm)
     covered_area = float(covered.area) if not covered.is_empty else 0.0
     pct = covered_area / boundary_area * 100.0
 
@@ -164,7 +172,7 @@ def compute_coverage(
                 "pct_coverage": round(pct, 2),
                 "radius_m": radius_m,
             },
-            "geometry": mapping(_to_wgs84(covered)),
+            "geometry": mapping(_reproject(covered, to_wgs)),
         }
 
     return {

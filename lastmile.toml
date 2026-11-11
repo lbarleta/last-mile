@@ -12,7 +12,6 @@ feeds_lang = "en"
 timezone = ""
 dashboard_title = "Last Mile · Austin"
 boundary_geojson = "assets/austin.json"
-projected_crs = "EPSG:4269"
 
 [systems.curitiba]
 lake_path = "data/lake/curitiba"
@@ -21,7 +20,6 @@ feeds_lang = "en"
 timezone = ""
 dashboard_title = "Last Mile · Curitiba"
 boundary_geojson = "assets/curitiba.json"
-projected_crs = "EPSG:31982"
 
 [metrics]
 # Problematic station, hours of operation (inclusive)

@@ -14,8 +14,8 @@ Whichever is active is resolved into the flat :class:`Settings`, so the rest
 of the code never sees more than one. A system's table is self-contained:
 ``lake_path`` and ``feeds_url`` are required, and anything else it leaves out
 takes the field default below. Those defaults are generic — a language, a
-CRS, a blank timezone meaning "the system's own" — never a deployment's
-values, so installing the package never means editing its source.
+blank timezone meaning "the system's own" — never a deployment's values, so
+installing the package never means editing its source.
 """
 
 from __future__ import annotations
@@ -42,7 +42,6 @@ SYSTEM_KEYS = (
     "timezone",
     "dashboard_title",
     "boundary_geojson",
-    "projected_crs",
 )
 REQUIRED_SYSTEM_KEYS = ("lake_path", "feeds_url")
 METRICS_KEYS = (
@@ -84,9 +83,8 @@ class Settings:
     # falling back to UTC. Display only: the lake itself stores instants.
     timezone: str = ""
     dashboard_title: str = "Last Mile"
-    # City boundary for the coverage map; no default, since it is a city.
+    # City boundary for the coverage map, WGS84 GeoJSON; no default, since it is a city.
     boundary_geojson: str = ""
-    projected_crs: str = "EPSG:4326"
 
     # --- metrics --------------------------------------------------------------
     # Ops "day" window for problematic-station scoring (local hour, inclusive).

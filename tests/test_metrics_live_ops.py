@@ -43,8 +43,7 @@ def boundary(tmp_path, configure):
         ),
         encoding="utf-8",
     )
-    # Buffering is in the projected CRS's units; the default (WGS84) is degrees.
-    configure(system={"boundary_geojson": str(path), "projected_crs": "EPSG:3310"})
+    configure(system={"boundary_geojson": str(path)})
     coverage._load_boundary.cache_clear()
     return path
 

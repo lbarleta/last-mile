@@ -126,7 +126,7 @@ environment. Every key is optional except a system's `lake_path` and
 - `[general]`: `default_system`, `request_timeout_s`, `umami_website_id`.
 - `[systems.<name>]`: what differs between bike-share systems — `lake_path`,
   `feeds_url`, `feeds_lang`, `timezone`, `dashboard_title`,
-  `boundary_geojson`, `projected_crs`. A system's table is self-contained;
+  `boundary_geojson`. A system's table is self-contained;
   nothing is inherited from another.
 - `[metrics]`: thresholds and windows, shared by every system.
 

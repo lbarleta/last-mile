@@ -85,7 +85,7 @@ class LiveOpsMetrics(BaseMetric):
         )
 
         cov = coverage.compute_coverage(snapshot, free_bike_locs)
-        current["pct_sf_coverage"] = cov["pct_coverage"]
+        current["pct_coverage"] = cov["pct_coverage"]
         current["coverage_geojson"] = cov["coverage_geojson"]
         current["coverage_n_sources"] = cov["n_sources"]
 
@@ -146,8 +146,8 @@ class LiveOpsMetrics(BaseMetric):
                 deltas["avg_dist_to_station_m"] = None
 
             prior_cov = coverage.compute_coverage(prior_snapshot, prior_bike_locs)
-            deltas["pct_sf_coverage"] = (
-                current["pct_sf_coverage"] - prior_cov["pct_coverage"]
+            deltas["pct_coverage"] = (
+                current["pct_coverage"] - prior_cov["pct_coverage"]
             )
         else:
             for key in (
@@ -161,7 +161,7 @@ class LiveOpsMetrics(BaseMetric):
                 "low_range_bikes",
                 "pct_low_range",
                 "avg_dist_to_station_m",
-                "pct_sf_coverage",
+                "pct_coverage",
             ):
                 deltas[key] = None
 
@@ -249,7 +249,7 @@ class LiveOpsMetrics(BaseMetric):
             "bikes_per_10_docks_typical": None,
             "bikes_per_10_docks_samples": 0,
             "bikes_per_10_docks_vs_typical": None,
-            "pct_sf_coverage": 0.0,
+            "pct_coverage": 0.0,
             "coverage_geojson": None,
             "coverage_n_sources": 0,
             "stations": snapshot,

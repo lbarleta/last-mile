@@ -371,8 +371,8 @@ def render_live_kpis(metrics: dict[str, Any]) -> None:
         metrics.get("timestamp"),
         int(metrics.get("bikes_per_10_docks_samples") or 0),
     )
-    coverage_pct = float(metrics.get("pct_sf_coverage") or 0.0)
-    coverage_delta = _fmt_delta(deltas.get("pct_sf_coverage"), as_pp=True)
+    coverage_pct = float(metrics.get("pct_coverage") or 0.0)
+    coverage_delta = _fmt_delta(deltas.get("pct_coverage"), as_pp=True)
     coverage_note = "vs prior hour" if coverage_delta else "no prior hour"
     st.markdown(
         f"""
