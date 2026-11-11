@@ -20,26 +20,29 @@ lastmile status       # what the warehouse holds
 lastmile dashboard    # serve the Streamlit app
 ```
 
-Nothing needs configuring to try it: the shipped `lastmile.toml` collects
-Austin into `data/lake/austin` and also declares Curitiba. Each GBFS system is
-a `[systems.<name>]` table; `--system` on any command picks one and
+Nothing needs configuring to try it: the shipped `lastmile.toml` declares two
+example systems, Austin and Curitiba, and the repository ships a small lake for
+each under `data/example_*` (real reference data and one real snapshot, followed
+by a few made-up hours) plus their city boundaries in `assets/`. Each GBFS
+system is a `[systems.<name>]` table; `--system` on any command picks one and
 `default_system` applies otherwise.
 
 ```toml
 [general]
-default_system = "austin"
+default_system = "example_austin"
 
-[systems.austin]
-lake_path = "data/lake/austin"
+[systems.example_austin]
+lake_path = "data/example_austin"
 feeds_url = "https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
 
-[systems.curitiba]
-lake_path = "data/lake/curitiba"
+[systems.example_curitiba]
+lake_path = "data/example_curitiba"
 feeds_url = "https://curitiba.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
 ```
 
 ```bash
-lastmile collect --system curitiba  # default_system when omitted
+lastmile dashboard                           # browse the example lake
+lastmile collect --system example_curitiba   # default_system when omitted
 ```
 
 ```cron
@@ -57,8 +60,8 @@ A directory of Parquet files read by DuckDB in-process. No server, no
 credentials, no connection string; moving a warehouse is copying the directory.
 
 ```text
-data/lake/
-  station_status/2026-10-29.parquet       hourly history, one file per UTC day
+data/example_austin/
+  station_status/2026-11-11.parquet       hourly history, one file per UTC day
   station_information/data.parquet        current state
   station_information_log/data.parquet    one row per add / change / removal
 ```
@@ -87,7 +90,7 @@ Not collected: per-vehicle `rental_uris`.
 Read the lake without this package:
 
 ```bash
-duckdb -c "SELECT ts, SUM(num_vehicles_available) FROM 'data/lake/station_status/*.parquet'
+duckdb -c "SELECT ts, SUM(num_vehicles_available) FROM 'data/example_austin/station_status/*.parquet'
            GROUP BY ts ORDER BY ts"
 ```
 

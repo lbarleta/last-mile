@@ -2,21 +2,27 @@
 
 ## Source
 
-City boundary data is derived from the U.S. Census Bureau's 2019 TIGER/Line Shapefiles, Places layer.
+The example city boundaries (`example_*.json`) are the administrative
+boundary relations from OpenStreetMap, fetched through the Nominatim lookup
+API on 2026-11-11 and saved as GeoJSON FeatureCollections (WGS84).
 
-- Publisher: U.S. Census Bureau, Geography Division
-- Dataset: 2019 TIGER/Line Shapefiles: Places (`tl_2019_<STATEFP>_place`)
-- Source URL: https://www2.census.gov/geo/tiger/TIGER2019/PLACE/
-- Vintage: 2019
+| File | OSM relation | Place |
+|---|---|---|
+| `example_austin.json` | [113314](https://www.openstreetmap.org/relation/113314) | Austin, Travis County, Texas, United States |
+| `example_curitiba.json` | [297514](https://www.openstreetmap.org/relation/297514) | Curitiba, Paraná, Brazil |
 
-Suggested citation:
-
-> U.S. Census Bureau. (2019). *2019 TIGER/Line Shapefiles: Places*. Retrieved from https://www2.census.gov/geo/tiger/TIGER2019/PLACE/
+Each feature's properties record the relation id, the source and the licence.
 
 ## License
 
-TIGER/Line data is a work of the U.S. federal government and is in the public domain in the United States (17 U.S.C. § 105). It may be used, modified and redistributed without restriction. No endorsement by the U.S. Census Bureau is implied.
+© OpenStreetMap contributors. The data is available under the
+[Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+You are free to copy, distribute, transmit and adapt it as long as you credit
+OpenStreetMap and its contributors; any altered or derived database must be
+shared under the same licence. See https://www.openstreetmap.org/copyright.
 
 ## Disclaimer
 
-TIGER/Line boundaries are provided for statistical purposes only. They are not legal land descriptions and should not be used to determine jurisdictional authority, ownership or entitlement.
+OpenStreetMap boundaries are community-maintained and are not legal land
+descriptions. They should not be used to determine jurisdictional authority,
+ownership or entitlement.

@@ -1,25 +1,25 @@
 # LastMile configuration. Defaults for omitted keys are in src/lastmile/settings.py.
 
 [general]
-default_system = "austin"
+default_system = "example_austin"
 request_timeout_s = 30
 umami_website_id = "" # Umami analytics id; blank disables feature.
 
-[systems.austin]
-lake_path = "data/lake/austin"
+[systems.example_austin]
+lake_path = "data/example_austin"
 feeds_url = "https://austin.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
 feeds_lang = "en"
 timezone = ""
 dashboard_title = "Last Mile · Austin"
-boundary_geojson = "assets/austin.json"
+boundary_geojson = "assets/example_austin.json"
 
-[systems.curitiba]
-lake_path = "data/lake/curitiba"
+[systems.example_curitiba]
+lake_path = "data/example_curitiba"
 feeds_url = "https://curitiba.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
 feeds_lang = "en"
 timezone = ""
 dashboard_title = "Last Mile · Curitiba"
-boundary_geojson = "assets/curitiba.json"
+boundary_geojson = "assets/example_curitiba.json"
 
 [metrics]
 # Problematic station, hours of operation (inclusive)

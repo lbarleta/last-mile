@@ -167,8 +167,9 @@ Thumbs.db
 temp/
 tmp/
 
-# Local data warehouse
-data/
+# Local data warehouse; the shipped example lakes are the exception
+data/*
+!data/example_*/
 
 # Log files
 *.log
