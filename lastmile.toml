@@ -3,11 +3,7 @@
 [general]
 default_system = "austin"
 request_timeout_s = 30
-# Umami analytics id; blank disables.
-umami_website_id = ""
-
-# One table per GBFS system; `lastmile <cmd> --system <name>` picks one.
-# A blank timezone uses the system's own.
+umami_website_id = "" # Umami analytics id; blank disables feature.
 
 [systems.austin]
 lake_path = "data/lake/austin"
@@ -20,7 +16,6 @@ projected_crs = "EPSG:4269"
 
 [systems.curitiba]
 lake_path = "data/lake/curitiba"
-# Feed licensed CC-BY-4.0.
 feeds_url = "https://curitiba.publicbikesystem.net/customer/gbfs/v3.0/gbfs.json"
 feeds_lang = "en"
 timezone = ""
@@ -29,11 +24,12 @@ boundary_geojson = "assets/curitiba.json"
 projected_crs = "EPSG:31982"
 
 [metrics]
-# Ops day (local hours, inclusive) for problematic-station scoring.
+# Problematic station, hours of operation (inclusive)
 ops_day_hour_start = 7
 ops_day_hour_end = 20
 # Empty or full in any of the trailing N daytime hours flags a station.
 problematic_lookback_hours = 3
+
 # Search radius for a station to rebalance from.
 backup_station_radius_m = 900
 # Free-floating e-bikes at or below this range are low-range.
